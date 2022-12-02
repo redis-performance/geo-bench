@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/rueian/rueidis"
-	progressbar "github.com/schollz/progressbar/v3"
+	"github.com/schollz/progressbar/v3"
 	"io"
 	"log"
 	"os"
@@ -47,7 +47,55 @@ func LineCounter(r io.Reader) (int, error) {
 	return count, nil
 }
 
+var concurrency = 100
+
 func main() {
+	file, err := os.Open("documents.json")
+	nLines, err := LineCounter(file)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(nLines)
+	file.Close()
+
+	workQueue := make(chan string)
+
+	// We need to know when everyone is done so we can exit.
+	complete := make(chan bool)
+
+	// Read the lines into the work queue.
+	go func() {
+		file, err = os.Open("documents.json")
+		if err != nil {
+			log.Fatal(err)
+		}
+		// Close when the functin returns
+		defer file.Close()
+
+		scanner := bufio.NewScanner(file)
+
+		for scanner.Scan() {
+			workQueue <- scanner.Text()
+		}
+
+		// Close the channel so everyone reading from it knows we're done.
+		close(workQueue)
+	}()
+
+	bar := progressbar.Default(int64(nLines))
+
+	// Now read them all off, concurrently.
+	for i := 0; i < concurrency; i++ {
+		go startWorking(i+1, bar, workQueue, complete)
+	}
+
+	// Wait for everyone to finish.
+	for i := 0; i < concurrency; i++ {
+		<-complete
+	}
+}
+
+func startWorking(workerNumber int, b *progressbar.ProgressBar, queue chan string, complete chan bool) {
 	c, err := rueidis.NewClient(rueidis.ClientOption{
 		InitAddress: []string{"127.0.0.1:6379"},
 	})
@@ -56,19 +104,24 @@ func main() {
 	}
 	defer c.Close()
 	ctx := context.Background()
+	cpos := 0
+	for line := range queue {
+		var geo GeoPoint
+		json.Unmarshal([]byte(line), &geo)
+		lon := geo.LatLon[0]
+		lat := geo.LatLon[1]
+		memberS := fmt.Sprintf("w%d-%d", workerNumber, cpos)
+		c.Do(ctx, c.B().Geoadd().Key("key").LongitudeLatitudeMember().LongitudeLatitudeMember(lon, lat, memberS).Build()).Error()
+		cpos = cpos + 1
+		b.Add(1)
 
-	file, err := os.Open("documents.json")
-	nLines, err := LineCounter(file)
-	if err != nil {
-		log.Fatal(err)
 	}
-	fmt.Println(nLines)
-	file.Close()
-	file, err = os.Open("documents.json")
-	if err != nil {
-		log.Fatal(err)
-	}
-	scanner := bufio.NewScanner(file)
+	// Let the main process know we're done.
+	complete <- true
+}
+
+/*
+
 
 	bar := progressbar.Default(int64(nLines))
 
@@ -88,4 +141,4 @@ func main() {
 		log.Fatal(err)
 	}
 
-}
+*/
