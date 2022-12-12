@@ -13,5 +13,5 @@ The results of the benchmarks can be used to compare the performance of differen
 wget https://rally-tracks.elastic.co/geopoint/documents.json.bz2
 bzip2 -d documents.json.bz2
 make build
-./load
+./geo-bench load
 ```
