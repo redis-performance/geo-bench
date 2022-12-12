@@ -24,3 +24,7 @@ go.work
 *.bz2
 .idea
 load
+geo-bench
+
+# coverage
+coverage.txt

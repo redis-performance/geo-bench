@@ -1,8 +1,17 @@
 
 
+
+This repository contains a set of scripts and tools for running benchmarks on vanilla Redis GEO commands and RediSearch, a full-text search engine for Redis. 
+
+The benchmarks in this repository cover a range of common Redis GEO and RediSearch operations, such as indexing, searching, and querying data. 
+
+The results of the benchmarks can be used to compare the performance of different Redis configurations, to gain insights into the behavior of these tools,  and to identify potential bottlenecks or areas for optimization.
+
+
+### Try it out
 ```
 wget https://rally-tracks.elastic.co/geopoint/documents.json.bz2
 bzip2 -d documents.json.bz2
-go build load.go
+make build
 ./load
 ```
