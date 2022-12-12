@@ -123,10 +123,12 @@ func setupStage(uri, db string) {
 	case "redisearch-hash":
 		err = c.Do(ctx, c.B().FtCreate().Index("idx").OnHash().Schema().FieldName("location").Geo().Build()).Error()
 	case "redis":
+		log.Printf("No setup for %s DB\n", db)
 		fallthrough
 	case "redis-geo":
-		fallthrough
+		log.Printf("No setup for %s DB\n", db)
 	default:
+		log.Fatal(fmt.Sprintf("DB was not recognized. Exiting..."))
 	}
 	if err != nil {
 		log.Fatal(fmt.Sprintf("Received error on setup stage: '%s'. Exiting...", err.Error()))

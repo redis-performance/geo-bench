@@ -10,7 +10,7 @@ The results of the benchmarks can be used to compare the performance of differen
 
 ### Try it out
 ```
-wget https://rally-tracks.elastic.co/geopoint/documents.json.bz2
+wget https://s3.us-east-2.amazonaws.com/redis.benchmarks.spec/datasets/geopoint/documents.json.bz2
 bzip2 -d documents.json.bz2
 make build
 ./geo-bench load
