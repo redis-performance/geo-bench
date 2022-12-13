@@ -30,6 +30,7 @@ var loadCmd = &cobra.Command{
 	Short: "Benchmark indexing operations of geographic coordinates.",
 	Long:  `This command covers indexing operations of geographic coordinates.`,
 	Run: func(cmd *cobra.Command, args []string) {
+		indexSearch, _ := cmd.Flags().GetBool("redisearch.index")
 		db, _ := cmd.Flags().GetString("db")
 		input, _ := cmd.Flags().GetString("input")
 		uri, _ := cmd.Flags().GetString("uri")
@@ -75,7 +76,7 @@ var loadCmd = &cobra.Command{
 		}()
 
 		var geopoints uint64
-		setupStage(uri, db)
+		setupStage(uri, db, indexSearch)
 		// listen for C-c
 		controlC := make(chan os.Signal, 1)
 		signal.Notify(controlC, os.Interrupt)
@@ -110,7 +111,7 @@ var loadCmd = &cobra.Command{
 	},
 }
 
-func setupStage(uri, db string) {
+func setupStage(uri, db string, indexSearch bool) {
 	c, err := rueidis.NewClient(rueidis.ClientOption{
 		InitAddress: []string{uri},
 	})
@@ -119,9 +120,21 @@ func setupStage(uri, db string) {
 	log.Printf("Starting setup stage for %s DB. Sending setup commands...\n", db)
 	switch db {
 	case "redisearch-json":
-		err = c.Do(ctx, c.B().FtCreate().Index("idx").OnJson().Schema().FieldName("$.location").As("location").Geo().Build()).Error()
+		indexName := "idx"
+		if indexSearch {
+			log.Printf("Creating redisearch index named %s.\n", indexName)
+			err = c.Do(ctx, c.B().FtCreate().Index(indexName).OnJson().Schema().FieldName("$.location").As("location").Geo().Build()).Error()
+		} else {
+			log.Printf("Skipping the creation of redisearch index %s.\n", indexName)
+		}
 	case "redisearch-hash":
-		err = c.Do(ctx, c.B().FtCreate().Index("idx").OnHash().Schema().FieldName("location").Geo().Build()).Error()
+		indexName := "idx"
+		if indexSearch {
+			log.Printf("Creating redisearch index named %s.\n", indexName)
+			err = c.Do(ctx, c.B().FtCreate().Index(indexName).OnHash().Schema().FieldName("location").Geo().Build()).Error()
+		} else {
+			log.Printf("Skipping the creation of redisearch index %s.\n", indexName)
+		}
 	case "redis":
 		log.Printf("No setup for %s DB\n", db)
 		fallthrough
@@ -202,6 +215,7 @@ func init() {
 	loadCmd.Flags().IntP("requests", "n", -1, "Requests. If -1 then it will use all input datapoints")
 	loadCmd.Flags().StringP("uri", "u", "localhost:6379", "Server URI")
 	loadCmd.Flags().BoolP("cluster", "", false, "Enable cluster mode")
+	loadCmd.Flags().BoolP("redisearch.index", "", true, "Enable redisearch secondary index on HASH and JSON datatypes")
 }
 
 type GeoPoint struct {
