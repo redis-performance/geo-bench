@@ -7,7 +7,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	hdrhistogram "github.com/HdrHistogram/hdrhistogram-go"
 	"github.com/rueian/rueidis"
@@ -16,6 +15,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"sync/atomic"
 	"time"
 )
@@ -30,12 +30,15 @@ var loadCmd = &cobra.Command{
 	Short: "Benchmark indexing operations of geographic coordinates.",
 	Long:  `This command covers indexing operations of geographic coordinates.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		indexSearch, _ := cmd.Flags().GetBool("redisearch.index")
+		indexSearch, _ := cmd.Flags().GetBool(REDIS_IDX_PROPERTY)
+		indexSearchName, _ := cmd.Flags().GetString(REDIS_IDX_NAME_PROPERTY)
 		db, _ := cmd.Flags().GetString("db")
 		input, _ := cmd.Flags().GetString("input")
 		uri, _ := cmd.Flags().GetString("uri")
 		concurrency, _ := cmd.Flags().GetInt("concurrency")
 		requests, _ := cmd.Flags().GetInt("requests")
+		redisGeoKeyname, _ := cmd.Flags().GetString(REDIS_GEO_KEYNAME_PROPERTY)
+		validateDB(db)
 		log.Printf("Using %d concurrent workers to ingest datapoints", concurrency)
 		latencies = hdrhistogram.New(1, 90000000, 3)
 		file, err := os.Open(input)
@@ -66,9 +69,13 @@ var loadCmd = &cobra.Command{
 			defer file.Close()
 
 			scanner := bufio.NewScanner(file)
-
+			n := 0
 			for scanner.Scan() {
 				workQueue <- scanner.Text()
+				n = n + 1
+				if n >= nDatapoints {
+					break
+				}
 			}
 
 			// Close the channel so everyone reading from it knows we're done.
@@ -76,7 +83,7 @@ var loadCmd = &cobra.Command{
 		}()
 
 		var geopoints uint64
-		setupStage(uri, db, indexSearch)
+		setupStage(uri, db, indexSearch, indexSearchName)
 		// listen for C-c
 		controlC := make(chan os.Signal, 1)
 		signal.Notify(controlC, os.Interrupt)
@@ -85,12 +92,12 @@ var loadCmd = &cobra.Command{
 		start := time.Now()
 		// Now read them all off, concurrently.
 		for i := 0; i < concurrency; i++ {
-			go startWorking(uri, workQueue, complete, &geopoints, datapointsChan, uint64(nDatapoints), db)
+			go loadWorker(uri, workQueue, complete, &geopoints, datapointsChan, uint64(nDatapoints), db, redisGeoKeyname)
 			// delay the creation 1ms for each additional client
 			time.Sleep(time.Millisecond * 1)
 		}
 
-		_, _, duration, totalMessages, _ := updateCLI(tick, controlC, uint64(nDatapoints), false, datapointsChan, start)
+		_, _, duration, totalMessages, _, _, _ := updateCLI(tick, controlC, uint64(nDatapoints), false, datapointsChan, start)
 		messageRate := float64(totalMessages) / float64(duration.Seconds())
 		avgMs := float64(latencies.Mean()) / 1000.0
 		p50IngestionMs := float64(latencies.ValueAtQuantile(50.0)) / 1000.0
@@ -111,7 +118,22 @@ var loadCmd = &cobra.Command{
 	},
 }
 
-func setupStage(uri, db string, indexSearch bool) {
+func validateDB(db string) {
+	switch db {
+	case REDIS_TYPE_JSON:
+		log.Printf("Using %s db...", db)
+	case REDIS_TYPE_HASH:
+		log.Printf("Using %s db...", db)
+	case REDIS_TYPE_GENERIC:
+		log.Printf("Using %s db...", db)
+	case REDIS_TYPE_GEO:
+		log.Printf("Using %s db...", db)
+	default:
+		log.Fatal(fmt.Sprintf("DB was not recognized. Exiting..."))
+	}
+}
+
+func setupStage(uri, db string, indexSearch bool, indexName string) {
 	c, err := rueidis.NewClient(rueidis.ClientOption{
 		InitAddress: []string{uri},
 	})
@@ -119,26 +141,24 @@ func setupStage(uri, db string, indexSearch bool) {
 	ctx := context.Background()
 	log.Printf("Starting setup stage for %s DB. Sending setup commands...\n", db)
 	switch db {
-	case "redisearch-json":
-		indexName := "idx"
+	case REDIS_TYPE_JSON:
 		if indexSearch {
 			log.Printf("Creating redisearch index named %s.\n", indexName)
 			err = c.Do(ctx, c.B().FtCreate().Index(indexName).OnJson().Schema().FieldName("$.location").As("location").Geo().Build()).Error()
 		} else {
 			log.Printf("Skipping the creation of redisearch index %s.\n", indexName)
 		}
-	case "redisearch-hash":
-		indexName := "idx"
+	case REDIS_TYPE_HASH:
 		if indexSearch {
 			log.Printf("Creating redisearch index named %s.\n", indexName)
 			err = c.Do(ctx, c.B().FtCreate().Index(indexName).OnHash().Schema().FieldName("location").Geo().Build()).Error()
 		} else {
 			log.Printf("Skipping the creation of redisearch index %s.\n", indexName)
 		}
-	case "redis":
+	case REDIS_TYPE_GENERIC:
 		log.Printf("No setup for %s DB\n", db)
 		fallthrough
-	case "redis-geo":
+	case REDIS_TYPE_GEO:
 		log.Printf("No setup for %s DB\n", db)
 	default:
 		log.Fatal(fmt.Sprintf("DB was not recognized. Exiting..."))
@@ -149,12 +169,14 @@ func setupStage(uri, db string, indexSearch bool) {
 	log.Printf("Finished setup stage for %s DB\n", db)
 }
 
-func updateCLI(tick *time.Ticker, c chan os.Signal, message_limit uint64, loop bool, datapointsChan chan datapoint, start time.Time) (bool, time.Time, time.Duration, uint64, []float64) {
+func updateCLI(tick *time.Ticker, c chan os.Signal, message_limit uint64, loop bool, datapointsChan chan datapoint, start time.Time) (bool, time.Time, time.Duration, uint64, []float64, map[int]int, float64) {
 	var currentErr uint64 = 0
 	var currentCount uint64 = 0
+	var currentReplySize int64 = 0
 	prevTime := time.Now()
 	prevMessageCount := uint64(0)
 	messageRateTs := []float64{}
+	var histogram = make(map[int]int)
 	var dp datapoint
 	fmt.Printf("%26s %7s %25s %25s %7s %25s %25s\n", "Test time", " ", "Total Commands", "Total Errors", "", "Command Rate", "p50 lat. (msec)")
 	for {
@@ -166,6 +188,8 @@ func updateCLI(tick *time.Ticker, c chan os.Signal, message_limit uint64, loop b
 					currentErr++
 				}
 				currentCount++
+				histogram[int(dp.resultset_size)]++
+				currentReplySize += dp.resultset_size
 			}
 		case <-tick.C:
 			{
@@ -194,7 +218,7 @@ func updateCLI(tick *time.Ticker, c chan os.Signal, message_limit uint64, loop b
 				fmt.Printf("%25.0fs %s %25d %25d [%3.1f%%] %25.2f %25.2f\t", time.Since(start).Seconds(), completionPercentStr, totalCommands, totalErrors, errorPercent, messageRate, p50)
 				fmt.Printf("\r")
 				if message_limit > 0 && totalCommands >= message_limit && !loop {
-					return true, start, time.Since(start), totalCommands, messageRateTs
+					return true, start, time.Since(start), totalCommands, messageRateTs, histogram, float64(currentReplySize / int64(totalCommands))
 				}
 
 				break
@@ -202,24 +226,22 @@ func updateCLI(tick *time.Ticker, c chan os.Signal, message_limit uint64, loop b
 
 		case <-c:
 			fmt.Println("\nreceived Ctrl-c - shutting down")
-			return true, start, time.Since(start), totalCommands, messageRateTs
+			return true, start, time.Since(start), totalCommands, messageRateTs, histogram, float64(currentReplySize / int64(totalCommands))
 		}
 	}
 }
 
 func init() {
 	rootCmd.AddCommand(loadCmd)
-	loadCmd.Flags().StringP("db", "", "redis", "Database to load the data to")
+	loadCmd.Flags().StringP("db", "", REDIS_TYPE_GEO, fmt.Sprintf("Database to load the data to. One of %s", strings.Join([]string{REDIS_TYPE_GEO, REDIS_TYPE_JSON, REDIS_TYPE_HASH}, ",")))
 	loadCmd.Flags().StringP("input", "i", "documents.json", "Input json file")
 	loadCmd.Flags().IntP("concurrency", "c", 50, "Concurrency")
 	loadCmd.Flags().IntP("requests", "n", -1, "Requests. If -1 then it will use all input datapoints")
 	loadCmd.Flags().StringP("uri", "u", "localhost:6379", "Server URI")
 	loadCmd.Flags().BoolP("cluster", "", false, "Enable cluster mode")
-	loadCmd.Flags().BoolP("redisearch.index", "", true, "Enable redisearch secondary index on HASH and JSON datatypes")
-}
-
-type GeoPoint struct {
-	LatLon []float64 `json:"location"`
+	loadCmd.Flags().BoolP(REDIS_IDX_PROPERTY, "", true, "Enable redisearch secondary index on HASH and JSON datatypes")
+	loadCmd.Flags().StringP(REDIS_IDX_NAME_PROPERTY, "", REDIS_DEFAULT_IDX_NAME, "redisearch secondary index name")
+	loadCmd.Flags().StringP(REDIS_GEO_KEYNAME_PROPERTY, "", REDIS_GEO_DEFAULT_KEYNAME, "redis GEO keyname")
 }
 
 func LineCounter(r io.Reader) (int, error) {
@@ -252,12 +274,7 @@ func LineCounter(r io.Reader) (int, error) {
 	return count, nil
 }
 
-type datapoint struct {
-	success     bool
-	duration_ms int64
-}
-
-func startWorking(uri string, queue chan string, complete chan bool, ops *uint64, datapointsChan chan datapoint, totalDatapoints uint64, db string) {
+func loadWorker(uri string, queue chan string, complete chan bool, ops *uint64, datapointsChan chan datapoint, totalDatapoints uint64, db string, redisGeoKeyname string) {
 	c, err := rueidis.NewClient(rueidis.ClientOption{
 		InitAddress: []string{uri},
 	})
@@ -267,10 +284,7 @@ func startWorking(uri string, queue chan string, complete chan bool, ops *uint64
 	defer c.Close()
 	ctx := context.Background()
 	for line := range queue {
-		var geo GeoPoint
-		json.Unmarshal([]byte(line), &geo)
-		lon := geo.LatLon[0]
-		lat := geo.LatLon[1]
+		lon, lat := lineToLonLat(line)
 		previousOpsVal := atomic.LoadUint64(ops)
 		if previousOpsVal >= totalDatapoints {
 			break
@@ -281,21 +295,21 @@ func startWorking(uri string, queue chan string, complete chan bool, ops *uint64
 		memberS := fmt.Sprintf("%d", opsVal)
 		startT := time.Now()
 		switch db {
-		case "redisearch-json":
+		case REDIS_TYPE_JSON:
 			err = c.Do(ctx, c.B().JsonSet().Key(memberS).Path("$").Value(fmt.Sprintf("{\"location\":\"%f,%f\"}", lon, lat)).Build()).Error()
-		case "redisearch-hash":
+		case REDIS_TYPE_HASH:
 			err = c.Do(ctx, c.B().Hset().Key(memberS).FieldValue().FieldValue("location", fmt.Sprintf("%f,%f", lon, lat)).Build()).Error()
-		case "redis":
+		case REDIS_TYPE_GENERIC:
 			fallthrough
-		case "redis-geo":
+		case REDIS_TYPE_GEO:
 			fallthrough
 		default:
-			err = c.Do(ctx, c.B().Geoadd().Key("key").LongitudeLatitudeMember().LongitudeLatitudeMember(lon, lat, memberS).Build()).Error()
+			err = c.Do(ctx, c.B().Geoadd().Key(redisGeoKeyname).LongitudeLatitudeMember().LongitudeLatitudeMember(lon, lat, memberS).Build()).Error()
 		}
 		endT := time.Now()
 
 		duration := endT.Sub(startT)
-		datapointsChan <- datapoint{!(err != nil), duration.Microseconds()}
+		datapointsChan <- datapoint{!(err != nil), duration.Microseconds(), 0}
 
 	}
 	// Let the main process know we're done.
