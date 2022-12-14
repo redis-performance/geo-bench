@@ -4,7 +4,7 @@ go 1.19
 
 require (
 	github.com/HdrHistogram/hdrhistogram-go v1.1.2
-	github.com/rueian/rueidis v0.0.84
+	github.com/rueian/rueidis v0.0.89
 	github.com/spf13/cobra v1.6.1
 )
 

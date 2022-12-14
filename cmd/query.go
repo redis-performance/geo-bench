@@ -30,12 +30,19 @@ var queryCmd = &cobra.Command{
 		input, _ := cmd.Flags().GetString("input")
 		uri, _ := cmd.Flags().GetString("uri")
 		concurrency, _ := cmd.Flags().GetInt("concurrency")
+		testTime, _ := cmd.Flags().GetInt("test.time")
 		requests, _ := cmd.Flags().GetInt("requests")
 		seed, _ := cmd.Flags().GetInt("random.seed")
 		redisGeoKeyname, _ := cmd.Flags().GetString(REDIS_GEO_KEYNAME_PROPERTY)
+		indexSearchName, _ := cmd.Flags().GetString(REDIS_IDX_NAME_PROPERTY)
 		validateDB(db)
+		log.Printf("Using %d concurrent workers", concurrency)
+		if testTime > 0 {
+			log.Printf("Will run test for %d seconds", testTime)
+		} else {
+			log.Printf("Running test with %d queries", requests)
 
-		log.Printf("Using %d concurrent workers to ingest datapoints", concurrency)
+		}
 		log.Printf("Using %d random seed", seed)
 		latencies = hdrhistogram.New(1, 90000000, 3)
 		file, err := os.Open(input)
@@ -91,12 +98,12 @@ var queryCmd = &cobra.Command{
 		start := time.Now()
 		// Now read them all off, concurrently.
 		for i := 0; i < concurrency; i++ {
-			go queryWorker(uri, workQueue, complete, &geopoints, datapointsChan, uint64(nDatapoints), db, mu, r, redisGeoKeyname)
+			go queryWorker(uri, workQueue, complete, &geopoints, datapointsChan, uint64(nDatapoints), db, mu, r, redisGeoKeyname, indexSearchName, testTime)
 			// delay the creation 1ms for each additional client
 			time.Sleep(time.Millisecond * 1)
 		}
 
-		_, _, duration, totalMessages, _, _, avgReplySize := updateCLI(tick, controlC, uint64(nDatapoints), false, datapointsChan, start)
+		_, _, duration, totalMessages, _, _, avgReplySize := updateCLI(tick, controlC, uint64(nDatapoints), false, datapointsChan, start, testTime)
 		messageRate := float64(totalMessages) / float64(duration.Seconds())
 		avgMs := float64(latencies.Mean()) / 1000.0
 		p50IngestionMs := float64(latencies.ValueAtQuantile(50.0)) / 1000.0
@@ -124,6 +131,7 @@ func init() {
 	queryCmd.Flags().StringP("input", "i", "documents.json", "Input json file")
 	queryCmd.Flags().IntP("concurrency", "c", 50, "Concurrency")
 	queryCmd.Flags().IntP("random.seed", "", 12345, "Random seed")
+	queryCmd.Flags().IntP("test.time", "", -1, "Number of seconds to run the test. . If -1 then it will use requests property")
 	queryCmd.Flags().IntP("requests", "n", -1, "Requests. If -1 then it will use all input datapoints")
 	queryCmd.Flags().StringP("uri", "u", "localhost:6379", "Server URI")
 	queryCmd.Flags().BoolP("cluster", "", false, "Enable cluster mode")
@@ -131,7 +139,7 @@ func init() {
 	queryCmd.Flags().StringP(REDIS_GEO_KEYNAME_PROPERTY, "", REDIS_GEO_DEFAULT_KEYNAME, "redis GEO keyname")
 }
 
-func queryWorker(uri string, queue chan string, complete chan bool, ops *uint64, datapointsChan chan datapoint, totalDatapoints uint64, db string, mu sync.Mutex, r *rand.Rand, redisGeoKeyname string) {
+func queryWorker(uri string, queue chan string, complete chan bool, ops *uint64, datapointsChan chan datapoint, totalDatapoints uint64, db string, mu sync.Mutex, r *rand.Rand, redisGeoKeyname string, indexSearchName string, testDuration int) {
 
 	c, err := rueidis.NewClient(rueidis.ClientOption{
 		InitAddress: []string{uri},
@@ -140,6 +148,7 @@ func queryWorker(uri string, queue chan string, complete chan bool, ops *uint64,
 		panic(err)
 	}
 	defer c.Close()
+	testStartThread := time.Now()
 	ctx := context.Background()
 	for line := range queue {
 		lon, lat := lineToLonLat(line)
@@ -147,6 +156,11 @@ func queryWorker(uri string, queue chan string, complete chan bool, ops *uint64,
 		if previousOpsVal >= totalDatapoints {
 			break
 		}
+		threadDuration := time.Now().Sub(testStartThread).Seconds()
+		if testDuration > 0 && threadDuration > float64(testDuration) {
+			break
+		}
+
 		atomic.AddUint64(ops, 1)
 
 		// lock/unlock when accessing the rand from a goroutine
@@ -159,11 +173,11 @@ func queryWorker(uri string, queue chan string, complete chan bool, ops *uint64,
 		startT := time.Now()
 		switch db {
 		case REDIS_TYPE_JSON:
-			innerRes, err1 := c.Do(ctx, c.B().FtSearch().Index("idx").Query(querySearch).Return("1").Identifier("location").Limit().OffsetNum(0, 100000).Build()).ToArray()
+			innerRes, err1 := c.Do(ctx, c.B().FtSearch().Index(indexSearchName).Query(querySearch).Return("1").Identifier("location").Limit().OffsetNum(0, 100000).Build()).ToArray()
 			err = err1
 			resultSetSize, err = innerRes[0].ToInt64()
 		case REDIS_TYPE_HASH:
-			innerRes, err1 := c.Do(ctx, c.B().FtSearch().Index("idx").Query(querySearch).Return("1").Identifier("location").Limit().OffsetNum(0, 100000).Build()).ToArray()
+			innerRes, err1 := c.Do(ctx, c.B().FtSearch().Index(indexSearchName).Query(querySearch).Return("1").Identifier("location").Limit().OffsetNum(0, 100000).Build()).ToArray()
 			err = err1
 			resultSetSize, err = innerRes[0].ToInt64()
 		case REDIS_TYPE_GENERIC:

@@ -97,7 +97,7 @@ var loadCmd = &cobra.Command{
 			time.Sleep(time.Millisecond * 1)
 		}
 
-		_, _, duration, totalMessages, _, _, _ := updateCLI(tick, controlC, uint64(nDatapoints), false, datapointsChan, start)
+		_, _, duration, totalMessages, _, _, _ := updateCLI(tick, controlC, uint64(nDatapoints), false, datapointsChan, start, 0)
 		messageRate := float64(totalMessages) / float64(duration.Seconds())
 		avgMs := float64(latencies.Mean()) / 1000.0
 		p50IngestionMs := float64(latencies.ValueAtQuantile(50.0)) / 1000.0
@@ -169,7 +169,7 @@ func setupStage(uri, db string, indexSearch bool, indexName string) {
 	log.Printf("Finished setup stage for %s DB\n", db)
 }
 
-func updateCLI(tick *time.Ticker, c chan os.Signal, message_limit uint64, loop bool, datapointsChan chan datapoint, start time.Time) (bool, time.Time, time.Duration, uint64, []float64, map[int]int, float64) {
+func updateCLI(tick *time.Ticker, c chan os.Signal, message_limit uint64, loop bool, datapointsChan chan datapoint, start time.Time, testTime int) (bool, time.Time, time.Duration, uint64, []float64, map[int]int, float64) {
 	var currentErr uint64 = 0
 	var currentCount uint64 = 0
 	var currentReplySize int64 = 0
@@ -180,6 +180,11 @@ func updateCLI(tick *time.Ticker, c chan os.Signal, message_limit uint64, loop b
 	var dp datapoint
 	fmt.Printf("%26s %7s %25s %25s %7s %25s %25s\n", "Test time", " ", "Total Commands", "Total Errors", "", "Command Rate", "p50 lat. (msec)")
 	for {
+		if testTime > 0 && time.Now().Sub(start).Seconds() > float64(testTime) {
+			fmt.Println("\nReached test limit - shutting down")
+			return true, start, time.Since(start), totalCommands, messageRateTs, histogram, float64(currentReplySize / int64(totalCommands))
+		}
+
 		select {
 		case dp = <-datapointsChan:
 			{
@@ -203,6 +208,10 @@ func updateCLI(tick *time.Ticker, c chan os.Signal, message_limit uint64, loop b
 				completionPercentStr := "[----%]"
 				if !loop {
 					completionPercent := float64(totalCommands) / float64(message_limit) * 100.0
+					if testTime > 0 {
+						currentTestDurationSec := time.Now().Sub(start).Seconds()
+						completionPercent = currentTestDurationSec / float64(testTime) * 100.0
+					}
 					completionPercentStr = fmt.Sprintf("[%3.1f%%]", completionPercent)
 				}
 				errorPercent := float64(totalErrors) / float64(totalCommands) * 100.0
