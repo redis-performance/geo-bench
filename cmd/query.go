@@ -175,11 +175,15 @@ func queryWorker(uri string, queue chan string, complete chan bool, ops *uint64,
 		case REDIS_TYPE_JSON:
 			innerRes, err1 := c.Do(ctx, c.B().FtSearch().Index(indexSearchName).Query(querySearch).Return("1").Identifier("location").Limit().OffsetNum(0, 100000).Build()).ToArray()
 			err = err1
-			resultSetSize, err = innerRes[0].ToInt64()
+			if len(innerRes) > 0 {
+				resultSetSize, err = innerRes[0].ToInt64()
+			}
 		case REDIS_TYPE_HASH:
 			innerRes, err1 := c.Do(ctx, c.B().FtSearch().Index(indexSearchName).Query(querySearch).Return("1").Identifier("location").Limit().OffsetNum(0, 100000).Build()).ToArray()
 			err = err1
-			resultSetSize, err = innerRes[0].ToInt64()
+			if len(innerRes) > 0 {
+				resultSetSize, err = innerRes[0].ToInt64()
+			}
 		case REDIS_TYPE_GENERIC:
 			fallthrough
 		case REDIS_TYPE_GEO:
