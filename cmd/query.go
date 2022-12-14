@@ -165,11 +165,11 @@ func queryWorker(uri string, queue chan string, complete chan bool, ops *uint64,
 
 		// lock/unlock when accessing the rand from a goroutine
 		mu.Lock()
-		radius := math.Round(r.Float64()*50.0 + 1.0)
+		radius := math.Round(r.Float64()*3000.0 + 100.0)
 		mu.Unlock()
 		var res []string
 		var resultSetSize int64 = 0
-		querySearch := fmt.Sprintf("@location:[%f %f %f km]", lon, lat, radius)
+		querySearch := fmt.Sprintf("@location:[%f %f %f m]", lon, lat, radius)
 		startT := time.Now()
 		switch db {
 		case REDIS_TYPE_JSON:
@@ -185,7 +185,7 @@ func queryWorker(uri string, queue chan string, complete chan bool, ops *uint64,
 		case REDIS_TYPE_GEO:
 			fallthrough
 		default:
-			res, err = c.Do(ctx, c.B().Geosearch().Key(redisGeoKeyname).Fromlonlat(lon, lat).Byradius(radius).Km().Withcoord().Build()).AsStrSlice()
+			res, err = c.Do(ctx, c.B().Geosearch().Key(redisGeoKeyname).Fromlonlat(lon, lat).Byradius(radius).M().Withcoord().Build()).AsStrSlice()
 			resultSetSize = int64(len(res))
 		}
 		endT := time.Now()

@@ -11,6 +11,8 @@ const REDIS_GEO_DEFAULT_KEYNAME = "key"
 const REDIS_IDX_NAME_PROPERTY = "redisearch.index.name"
 const REDIS_IDX_PROPERTY = "redisearch.index"
 const REDIS_GEO_KEYNAME_PROPERTY = "redis.geo.keyname"
+const QUERY_TYPE_GEODIST_RADIUS = "geodist-radius"
+const QUERY_TYPE_GEODIST_BBOX = "geodist-bbox"
 
 type datapoint struct {
 	success        bool
