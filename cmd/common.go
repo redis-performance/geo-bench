@@ -8,13 +8,21 @@ const REDIS_TYPE_JSON = "redisearch-json"
 const REDIS_TYPE_HASH = "redisearch-hash"
 const INPUT_TYPE_GEOPOINT = "geopoint"
 const INPUT_TYPE_GEOSHAPE = "geoshape"
+const DEFAULT_INPUT_TYPE = INPUT_TYPE_GEOPOINT
 const REDIS_DEFAULT_IDX_NAME = "idx"
 const REDIS_GEO_DEFAULT_KEYNAME = "key"
 const REDIS_IDX_NAME_PROPERTY = "redisearch.index.name"
 const REDIS_IDX_PROPERTY = "redisearch.index"
 const REDIS_GEO_KEYNAME_PROPERTY = "redis.geo.keyname"
+
+const INDEX_FIELDNAME_GEOSHAPE = "shape"
+const INDEX_FIELDNAME_GEOPOINT = "location"
 const QUERY_TYPE_GEODIST_RADIUS = "geodist-radius"
 const QUERY_TYPE_GEODIST_BBOX = "geodist-bbox"
+const QUERY_TYPE_GEOSHAPE_WITHIN = "geoshape-within"
+const QUERY_TYPE_GEOSHAPE_CONTAINS = "geoshape-contains"
+const DEFAULT_QUERY_TYPE = QUERY_TYPE_GEOSHAPE_CONTAINS
+const DEFAULT_QUERY_TIMEOUT = 10000
 
 type datapoint struct {
 	success        bool

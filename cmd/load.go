@@ -88,11 +88,11 @@ var loadCmd = &cobra.Command{
 		}()
 
 		var geoCommands uint64
-		if strings.Compare(inputType, "geoshape") == 0 {
-			setupStageGeoShape(uri, db, indexSearch, indexSearchName)
+		if strings.Compare(inputType, INPUT_TYPE_GEOSHAPE) == 0 {
+			setupStageGeoShape(uri, db, indexSearch, indexSearchName, INDEX_FIELDNAME_GEOSHAPE)
 			// geopoint
 		} else {
-			setupStageGeoPoint(uri, db, indexSearch, indexSearchName)
+			setupStageGeoPoint(uri, db, indexSearch, indexSearchName, INDEX_FIELDNAME_GEOPOINT)
 		}
 
 		// listen for C-c
@@ -104,11 +104,11 @@ var loadCmd = &cobra.Command{
 		// Now read them all off, concurrently.
 		for i := 0; i < concurrency; i++ {
 			// geoshape
-			if strings.Compare(inputType, "geoshape") == 0 {
-				go loadWorkerGeoshape(uri, workQueue, complete, &geoCommands, datapointsChan, uint64(nDatapoints), db, redisGeoKeyname)
+			if strings.Compare(inputType, INPUT_TYPE_GEOSHAPE) == 0 {
+				go loadWorkerGeoshape(uri, workQueue, complete, &geoCommands, datapointsChan, uint64(nDatapoints), db, INDEX_FIELDNAME_GEOSHAPE)
 				// geopoint
 			} else {
-				go loadWorkerGeopoint(uri, workQueue, complete, &geoCommands, datapointsChan, uint64(nDatapoints), db, redisGeoKeyname)
+				go loadWorkerGeopoint(uri, workQueue, complete, &geoCommands, datapointsChan, uint64(nDatapoints), db, redisGeoKeyname, INDEX_FIELDNAME_GEOPOINT)
 			}
 
 			// delay the creation 1ms for each additional client
@@ -151,25 +151,26 @@ func validateDB(db string) {
 	}
 }
 
-func setupStageGeoShape(uri, db string, indexSearch bool, indexName string) {
+func setupStageGeoShape(uri, db string, indexSearch bool, indexName, fieldName string) {
 	c, err := rueidis.NewClient(rueidis.ClientOption{
 		InitAddress: []string{uri},
 	})
 	defer c.Close()
 	ctx := context.Background()
+	fieldPath := fmt.Sprintf("$.%s", fieldName)
 	log.Printf("Starting setup stage for %s DB. Sending setup commands...\n", db)
 	switch db {
 	case REDIS_TYPE_JSON:
 		if indexSearch {
-			log.Printf("Creating redisearch index named %s.\n", indexName)
-			err = c.Do(ctx, c.B().FtCreate().Index(indexName).OnJson().Schema().FieldName("$.shape").As("shape").Geometry().Build()).Error()
+			log.Printf("Creating redisearch index ON JSON named %s on field %s\n", indexName, fieldName)
+			err = c.Do(ctx, c.B().FtCreate().Index(indexName).OnJson().Schema().FieldName(fieldPath).As(fieldName).Geometry().Build()).Error()
 		} else {
 			log.Printf("Skipping the creation of redisearch index %s.\n", indexName)
 		}
 	case REDIS_TYPE_HASH:
 		if indexSearch {
-			log.Printf("Creating redisearch index named %s.\n", indexName)
-			err = c.Do(ctx, c.B().FtCreate().Index(indexName).OnHash().Schema().FieldName("shape").Geometry().Build()).Error()
+			log.Printf("Creating redisearch index ON HASH named %s on field %s\n", indexName, fieldName)
+			err = c.Do(ctx, c.B().FtCreate().Index(indexName).OnHash().Schema().FieldName(fieldName).Geometry().Build()).Error()
 		} else {
 			log.Printf("Skipping the creation of redisearch index %s.\n", indexName)
 		}
@@ -182,7 +183,7 @@ func setupStageGeoShape(uri, db string, indexSearch bool, indexName string) {
 	log.Printf("Finished setup stage for %s DB\n", db)
 }
 
-func setupStageGeoPoint(uri, db string, indexSearch bool, indexName string) {
+func setupStageGeoPoint(uri, db string, indexSearch bool, indexName, fieldname string) {
 	c, err := rueidis.NewClient(rueidis.ClientOption{
 		InitAddress: []string{uri},
 	})
@@ -193,14 +194,14 @@ func setupStageGeoPoint(uri, db string, indexSearch bool, indexName string) {
 	case REDIS_TYPE_JSON:
 		if indexSearch {
 			log.Printf("Creating redisearch index named %s.\n", indexName)
-			err = c.Do(ctx, c.B().FtCreate().Index(indexName).OnJson().Schema().FieldName("$.location").As("location").Geo().Build()).Error()
+			err = c.Do(ctx, c.B().FtCreate().Index(indexName).OnJson().Schema().FieldName("$.location").As(fieldname).Geo().Build()).Error()
 		} else {
 			log.Printf("Skipping the creation of redisearch index %s.\n", indexName)
 		}
 	case REDIS_TYPE_HASH:
 		if indexSearch {
 			log.Printf("Creating redisearch index named %s.\n", indexName)
-			err = c.Do(ctx, c.B().FtCreate().Index(indexName).OnHash().Schema().FieldName("location").Geo().Build()).Error()
+			err = c.Do(ctx, c.B().FtCreate().Index(indexName).OnHash().Schema().FieldName(fieldname).Geo().Build()).Error()
 		} else {
 			log.Printf("Skipping the creation of redisearch index %s.\n", indexName)
 		}
@@ -293,7 +294,7 @@ func init() {
 	rootCmd.AddCommand(loadCmd)
 	loadCmd.Flags().StringP("db", "", REDIS_TYPE_GEO, fmt.Sprintf("Database to load the data to. One of %s", strings.Join([]string{REDIS_TYPE_GEO, REDIS_TYPE_JSON, REDIS_TYPE_HASH}, ",")))
 	loadCmd.Flags().StringP("input", "i", "documents.json", "Input json file")
-	loadCmd.Flags().StringP("input-type", "", "geopoint", "Input type. One of 'geopoint' or 'geoshape")
+	loadCmd.Flags().StringP("input-type", "", DEFAULT_INPUT_TYPE, "Input type. One of 'geopoint' or 'geoshape'")
 	loadCmd.Flags().IntP("concurrency", "c", 50, "Concurrency")
 	loadCmd.Flags().IntP("requests", "n", -1, "Requests. If -1 then it will use all input datapoints")
 	loadCmd.Flags().StringP("uri", "u", "localhost:6379", "Server URI")
@@ -333,7 +334,7 @@ func LineCounter(r io.Reader) (int, error) {
 	return count, nil
 }
 
-func loadWorkerGeopoint(uri string, queue chan string, complete chan bool, ops *uint64, datapointsChan chan datapoint, totalDatapoints uint64, db string, redisGeoKeyname string) {
+func loadWorkerGeopoint(uri string, queue chan string, complete chan bool, ops *uint64, datapointsChan chan datapoint, totalDatapoints uint64, db string, redisGeoKeyname string, fieldName string) {
 	c, err := rueidis.NewClient(rueidis.ClientOption{
 		InitAddress: []string{uri},
 	})
@@ -355,9 +356,9 @@ func loadWorkerGeopoint(uri string, queue chan string, complete chan bool, ops *
 		startT := time.Now()
 		switch db {
 		case REDIS_TYPE_JSON:
-			err = c.Do(ctx, c.B().JsonSet().Key(memberS).Path("$").Value(fmt.Sprintf("{\"location\":\"%f,%f\"}", lon, lat)).Build()).Error()
+			err = c.Do(ctx, c.B().JsonSet().Key(memberS).Path("$").Value(fmt.Sprintf("{\"%s\":\"%f,%f\"}", fieldName, lon, lat)).Build()).Error()
 		case REDIS_TYPE_HASH:
-			err = c.Do(ctx, c.B().Hset().Key(memberS).FieldValue().FieldValue("location", fmt.Sprintf("%f,%f", lon, lat)).Build()).Error()
+			err = c.Do(ctx, c.B().Hset().Key(memberS).FieldValue().FieldValue(fieldName, fmt.Sprintf("%f,%f", lon, lat)).Build()).Error()
 		case REDIS_TYPE_GENERIC:
 			fallthrough
 		case REDIS_TYPE_GEO:
@@ -375,7 +376,7 @@ func loadWorkerGeopoint(uri string, queue chan string, complete chan bool, ops *
 	complete <- true
 }
 
-func loadWorkerGeoshape(uri string, queue chan string, complete chan bool, ops *uint64, datapointsChan chan datapoint, totalDatapoints uint64, db string, redisGeoKeyname string) {
+func loadWorkerGeoshape(uri string, queue chan string, complete chan bool, ops *uint64, datapointsChan chan datapoint, totalDatapoints uint64, db string, fieldName string) {
 	c, err := rueidis.NewClient(rueidis.ClientOption{
 		InitAddress: []string{uri},
 	})
@@ -397,11 +398,11 @@ func loadWorkerGeoshape(uri string, queue chan string, complete chan bool, ops *
 		startT := time.Now()
 		switch db {
 		case REDIS_TYPE_JSON:
-			err = c.Do(ctx, c.B().JsonSet().Key(memberS).Path("$").Value(fmt.Sprintf("{\"shape\":\"%s\"}", polygon)).Build()).Error()
+			err = c.Do(ctx, c.B().JsonSet().Key(memberS).Path("$").Value(fmt.Sprintf("{\"%s\":\"%s\"}", fieldName, polygon)).Build()).Error()
 		case REDIS_TYPE_HASH:
 			fallthrough
 		default:
-			err = c.Do(ctx, c.B().Hset().Key(memberS).FieldValue().FieldValue("shape", polygon).Build()).Error()
+			err = c.Do(ctx, c.B().Hset().Key(memberS).FieldValue().FieldValue(fieldName, polygon).Build()).Error()
 
 		}
 		endT := time.Now()
