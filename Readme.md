@@ -1,5 +1,5 @@
 
-
+![logo](./logo.png)
 
 This repository contains a set of scripts and tools for running benchmarks on vanilla Redis GEO commands and RediSearch, a full-text search engine for Redis. 
 
@@ -44,7 +44,10 @@ make
 ```
 
 
+
 ## Try it out
+
+### GeoPoints
 ```bash
 # get dataset
 wget https://s3.us-east-2.amazonaws.com/redis.benchmarks.spec/datasets/geopoint/documents.json.bz2
@@ -55,4 +58,17 @@ wget -c https://github.com/redis-performance/geo-bench/releases/latest/download/
 
 # load data
 ./geo-bench load
+```
+
+### GeoPolygons
+```bash
+# get dataset
+wget https://s3.us-east-2.amazonaws.com/redis.benchmarks.spec/datasets/geoshape/polygons.json.bz2
+bzip2 -d polygons.json.bz2
+
+# get tool
+wget -c https://github.com/redis-performance/geo-bench/releases/latest/download/geo-bench-$(uname -mrs | awk '{ print tolower($1) }')-$(dpkg --print-architecture).tar.gz -O - | tar -xz
+
+# load data
+./geo-bench load --input-type geoshape --input polygons.json 
 ```

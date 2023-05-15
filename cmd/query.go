@@ -8,7 +8,7 @@ import (
 	"context"
 	"fmt"
 	hdrhistogram "github.com/HdrHistogram/hdrhistogram-go"
-	"github.com/rueian/rueidis"
+	"github.com/redis/rueidis"
 	"github.com/spf13/cobra"
 	"log"
 	"math"
