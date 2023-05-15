@@ -9,7 +9,7 @@ import (
 	"context"
 	"fmt"
 	hdrhistogram "github.com/HdrHistogram/hdrhistogram-go"
-	"github.com/rueian/rueidis"
+	"github.com/redis/rueidis"
 	"github.com/spf13/cobra"
 	"io"
 	"log"
@@ -34,6 +34,7 @@ var loadCmd = &cobra.Command{
 		indexSearchName, _ := cmd.Flags().GetString(REDIS_IDX_NAME_PROPERTY)
 		db, _ := cmd.Flags().GetString("db")
 		input, _ := cmd.Flags().GetString("input")
+		inputType, _ := cmd.Flags().GetString("input-type")
 		uri, _ := cmd.Flags().GetString("uri")
 		concurrency, _ := cmd.Flags().GetInt("concurrency")
 		requests, _ := cmd.Flags().GetInt("requests")
@@ -69,9 +70,13 @@ var loadCmd = &cobra.Command{
 			defer file.Close()
 
 			scanner := bufio.NewScanner(file)
+			buf := make([]byte, 512*1024*1024)
+			scanner.Buffer(buf, 512*1024*1024)
+
 			n := 0
 			for scanner.Scan() {
-				workQueue <- scanner.Text()
+				finalInputLine := scanner.Text()
+				workQueue <- finalInputLine
 				n = n + 1
 				if n >= nDatapoints {
 					break
@@ -82,8 +87,14 @@ var loadCmd = &cobra.Command{
 			close(workQueue)
 		}()
 
-		var geopoints uint64
-		setupStage(uri, db, indexSearch, indexSearchName)
+		var geoCommands uint64
+		if strings.Compare(inputType, "geoshape") == 0 {
+			setupStageGeoShape(uri, db, indexSearch, indexSearchName)
+			// geopoint
+		} else {
+			setupStageGeoPoint(uri, db, indexSearch, indexSearchName)
+		}
+
 		// listen for C-c
 		controlC := make(chan os.Signal, 1)
 		signal.Notify(controlC, os.Interrupt)
@@ -92,7 +103,14 @@ var loadCmd = &cobra.Command{
 		start := time.Now()
 		// Now read them all off, concurrently.
 		for i := 0; i < concurrency; i++ {
-			go loadWorker(uri, workQueue, complete, &geopoints, datapointsChan, uint64(nDatapoints), db, redisGeoKeyname)
+			// geoshape
+			if strings.Compare(inputType, "geoshape") == 0 {
+				go loadWorkerGeoshape(uri, workQueue, complete, &geoCommands, datapointsChan, uint64(nDatapoints), db, redisGeoKeyname)
+				// geopoint
+			} else {
+				go loadWorkerGeopoint(uri, workQueue, complete, &geoCommands, datapointsChan, uint64(nDatapoints), db, redisGeoKeyname)
+			}
+
 			// delay the creation 1ms for each additional client
 			time.Sleep(time.Millisecond * 1)
 		}
@@ -114,7 +132,7 @@ var loadCmd = &cobra.Command{
 		fmt.Printf("Latency summary (msec):\n")
 		fmt.Printf("    %9s %9s %9s %9s\n", "avg", "p50", "p95", "p99")
 		fmt.Printf("    %9.3f %9.3f %9.3f %9.3f\n", avgMs, p50IngestionMs, p95IngestionMs, p99IngestionMs)
-		fmt.Println(fmt.Sprintf("Finished inserting %d geo points", geopoints))
+		fmt.Println(fmt.Sprintf("Finished inserting %d geo points", geoCommands))
 	},
 }
 
@@ -133,7 +151,38 @@ func validateDB(db string) {
 	}
 }
 
-func setupStage(uri, db string, indexSearch bool, indexName string) {
+func setupStageGeoShape(uri, db string, indexSearch bool, indexName string) {
+	c, err := rueidis.NewClient(rueidis.ClientOption{
+		InitAddress: []string{uri},
+	})
+	defer c.Close()
+	ctx := context.Background()
+	log.Printf("Starting setup stage for %s DB. Sending setup commands...\n", db)
+	switch db {
+	case REDIS_TYPE_JSON:
+		if indexSearch {
+			log.Printf("Creating redisearch index named %s.\n", indexName)
+			err = c.Do(ctx, c.B().FtCreate().Index(indexName).OnJson().Schema().FieldName("$.shape").As("shape").Geometry().Build()).Error()
+		} else {
+			log.Printf("Skipping the creation of redisearch index %s.\n", indexName)
+		}
+	case REDIS_TYPE_HASH:
+		if indexSearch {
+			log.Printf("Creating redisearch index named %s.\n", indexName)
+			err = c.Do(ctx, c.B().FtCreate().Index(indexName).OnHash().Schema().FieldName("shape").Geometry().Build()).Error()
+		} else {
+			log.Printf("Skipping the creation of redisearch index %s.\n", indexName)
+		}
+	default:
+		log.Fatal(fmt.Sprintf("DB was not recognized. Exiting..."))
+	}
+	if err != nil {
+		log.Fatal(fmt.Sprintf("Received error on setup stage: '%s'. Exiting...", err.Error()))
+	}
+	log.Printf("Finished setup stage for %s DB\n", db)
+}
+
+func setupStageGeoPoint(uri, db string, indexSearch bool, indexName string) {
 	c, err := rueidis.NewClient(rueidis.ClientOption{
 		InitAddress: []string{uri},
 	})
@@ -244,6 +293,7 @@ func init() {
 	rootCmd.AddCommand(loadCmd)
 	loadCmd.Flags().StringP("db", "", REDIS_TYPE_GEO, fmt.Sprintf("Database to load the data to. One of %s", strings.Join([]string{REDIS_TYPE_GEO, REDIS_TYPE_JSON, REDIS_TYPE_HASH}, ",")))
 	loadCmd.Flags().StringP("input", "i", "documents.json", "Input json file")
+	loadCmd.Flags().StringP("input-type", "", "geopoint", "Input type. One of 'geopoint' or 'geoshape")
 	loadCmd.Flags().IntP("concurrency", "c", 50, "Concurrency")
 	loadCmd.Flags().IntP("requests", "n", -1, "Requests. If -1 then it will use all input datapoints")
 	loadCmd.Flags().StringP("uri", "u", "localhost:6379", "Server URI")
@@ -283,7 +333,7 @@ func LineCounter(r io.Reader) (int, error) {
 	return count, nil
 }
 
-func loadWorker(uri string, queue chan string, complete chan bool, ops *uint64, datapointsChan chan datapoint, totalDatapoints uint64, db string, redisGeoKeyname string) {
+func loadWorkerGeopoint(uri string, queue chan string, complete chan bool, ops *uint64, datapointsChan chan datapoint, totalDatapoints uint64, db string, redisGeoKeyname string) {
 	c, err := rueidis.NewClient(rueidis.ClientOption{
 		InitAddress: []string{uri},
 	})
@@ -314,6 +364,45 @@ func loadWorker(uri string, queue chan string, complete chan bool, ops *uint64, 
 			fallthrough
 		default:
 			err = c.Do(ctx, c.B().Geoadd().Key(redisGeoKeyname).LongitudeLatitudeMember().LongitudeLatitudeMember(lon, lat, memberS).Build()).Error()
+		}
+		endT := time.Now()
+
+		duration := endT.Sub(startT)
+		datapointsChan <- datapoint{!(err != nil), duration.Microseconds(), 0}
+
+	}
+	// Let the main process know we're done.
+	complete <- true
+}
+
+func loadWorkerGeoshape(uri string, queue chan string, complete chan bool, ops *uint64, datapointsChan chan datapoint, totalDatapoints uint64, db string, redisGeoKeyname string) {
+	c, err := rueidis.NewClient(rueidis.ClientOption{
+		InitAddress: []string{uri},
+	})
+	if err != nil {
+		panic(err)
+	}
+	defer c.Close()
+	ctx := context.Background()
+	for line := range queue {
+		polygon := lineToPolygon(line)
+		previousOpsVal := atomic.LoadUint64(ops)
+		if previousOpsVal >= totalDatapoints {
+			break
+		}
+		atomic.AddUint64(ops, 1)
+
+		opsVal := atomic.LoadUint64(ops)
+		memberS := fmt.Sprintf("%d", opsVal)
+		startT := time.Now()
+		switch db {
+		case REDIS_TYPE_JSON:
+			err = c.Do(ctx, c.B().JsonSet().Key(memberS).Path("$").Value(fmt.Sprintf("{\"shape\":\"%s\"}", polygon)).Build()).Error()
+		case REDIS_TYPE_HASH:
+			fallthrough
+		default:
+			err = c.Do(ctx, c.B().Hset().Key(memberS).FieldValue().FieldValue("shape", polygon).Build()).Error()
+
 		}
 		endT := time.Now()
 
