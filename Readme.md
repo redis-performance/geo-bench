@@ -61,14 +61,23 @@ wget -c https://github.com/redis-performance/geo-bench/releases/latest/download/
 ```
 
 ### GeoPolygons
+
+#### Load data
 ```bash
-# get dataset
+# get dataset ( around 30GB uncompressed )
 wget https://s3.us-east-2.amazonaws.com/redis.benchmarks.spec/datasets/geoshape/polygons.json.bz2
 bzip2 -d polygons.json.bz2
 
 # get tool
 wget -c https://github.com/redis-performance/geo-bench/releases/latest/download/geo-bench-$(uname -mrs | awk '{ print tolower($1) }')-$(dpkg --print-architecture).tar.gz -O - | tar -xz
 
-# load data
-./geo-bench load --input-type geoshape --input polygons.json 
+# load 1st 1M polygons
+./geo-bench load --input-type geoshape --input polygons.json -n 1000000 --db redisearch-hash
+```
+
+#### Query data
+
+```bash
+# load 1st 1M polygons
+./geo-bench query --input-type geoshape --input polygons.json --db redisearch-hash -n 10000 --query-type geoshape-contains
 ```
