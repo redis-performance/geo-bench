@@ -6,6 +6,7 @@ package cmd
 import (
 	"bufio"
 	"context"
+	"filipecosta90/geo-bench/cmd/redis"
 	"fmt"
 	hdrhistogram "github.com/HdrHistogram/hdrhistogram-go"
 	"github.com/redis/rueidis"
@@ -37,7 +38,7 @@ var queryCmd = &cobra.Command{
 		debugLevel, _ := cmd.Flags().GetInt("debug")
 		queryTimeout, _ := cmd.Flags().GetInt64("query-timeout")
 		redisGeoKeyname, _ := cmd.Flags().GetString(REDIS_GEO_KEYNAME_PROPERTY)
-		indexSearchName, _ := cmd.Flags().GetString(REDIS_IDX_NAME_PROPERTY)
+		indexSearchName, _ := cmd.Flags().GetString(redis.REDIS_IDX_NAME_PROPERTY)
 		inputType, _ := cmd.Flags().GetString("input-type")
 		queryType, _ := cmd.Flags().GetString("query-type")
 
@@ -98,6 +99,7 @@ var queryCmd = &cobra.Command{
 		var mu sync.Mutex
 
 		var geopoints uint64
+		var activeConns int64
 		// listen for C-c
 		controlC := make(chan os.Signal, 1)
 		signal.Notify(controlC, os.Interrupt)
@@ -117,7 +119,7 @@ var queryCmd = &cobra.Command{
 			time.Sleep(time.Millisecond * 1)
 		}
 
-		_, _, duration, totalMessages, _, _, avgReplySize := updateCLI(tick, controlC, uint64(nDatapoints), false, datapointsChan, start, testTime)
+		_, _, duration, totalMessages, _, _, avgReplySize := updateCLI(tick, controlC, uint64(nDatapoints), &activeConns, false, datapointsChan, start, testTime)
 		messageRate := float64(totalMessages) / float64(duration.Seconds())
 		avgMs := float64(latencies.Mean()) / 1000.0
 		p50IngestionMs := float64(latencies.ValueAtQuantile(50.0)) / 1000.0
@@ -141,20 +143,9 @@ var queryCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(queryCmd)
-	queryCmd.Flags().StringP("db", "", "redis", "Database to load the data to")
-	queryCmd.Flags().StringP("input", "i", "documents.json", "Input json file")
-	queryCmd.Flags().StringP("input-type", "", DEFAULT_INPUT_TYPE, "Input type. One of 'geopoint' or 'geoshape'")
-	queryCmd.Flags().StringP("query-type", "", DEFAULT_QUERY_TYPE, "Query type. Only used for 'geoshape' inputs. One of 'geoshape-contains' or 'geoshape-within'")
-	queryCmd.Flags().Int64P("query-timeout", "", DEFAULT_QUERY_TIMEOUT, "Query timeout in millis.")
-	queryCmd.Flags().IntP("concurrency", "c", 50, "Concurrency")
-	queryCmd.Flags().IntP("debug", "", 0, "debug level. O no debug.")
-	queryCmd.Flags().IntP("random.seed", "", 12345, "Random seed")
-	queryCmd.Flags().IntP("test.time", "", -1, "Number of seconds to run the test. . If -1 then it will use requests property")
-	queryCmd.Flags().IntP("requests", "n", -1, "Requests. If -1 then it will use all input datapoints")
-	queryCmd.Flags().StringP("uri", "u", "localhost:6379", "Server URI")
-	queryCmd.Flags().BoolP("cluster", "", false, "Enable cluster mode")
-	queryCmd.Flags().StringP(REDIS_IDX_NAME_PROPERTY, "", REDIS_DEFAULT_IDX_NAME, "redisearch secondary index name")
-	queryCmd.Flags().StringP(REDIS_GEO_KEYNAME_PROPERTY, "", REDIS_GEO_DEFAULT_KEYNAME, "redis GEO keyname")
+	pflags := queryCmd.Flags()
+	pflags.StringP("db", "", "redis", "Database to load the data to")
+	redis.PrepareRedisQueryCommandFlags(pflags)
 }
 
 func queryWorkerGeoShape(uri string, queue chan string, complete chan bool, ops *uint64, datapointsChan chan datapoint, totalDatapoints uint64, db string, mu sync.Mutex, r *rand.Rand, indexSearchName, fieldName, queryType string, testDuration int, queryTimeoutMillis int64, debugLevel int) {

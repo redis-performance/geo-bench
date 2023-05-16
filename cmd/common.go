@@ -3,15 +3,15 @@ package cmd
 import "encoding/json"
 
 const REDIS_TYPE_GEO = "redis-geo"
-const REDIS_TYPE_GENERIC = "redis"
 const REDIS_TYPE_JSON = "redisearch-json"
 const REDIS_TYPE_HASH = "redisearch-hash"
+const REDIS_TYPE_GENERIC = "redis"
+const ELASTIC_TYPE_GENERIC = "elasticsearch"
 const INPUT_TYPE_GEOPOINT = "geopoint"
 const INPUT_TYPE_GEOSHAPE = "geoshape"
 const DEFAULT_INPUT_TYPE = INPUT_TYPE_GEOPOINT
 const REDIS_DEFAULT_IDX_NAME = "idx"
 const REDIS_GEO_DEFAULT_KEYNAME = "key"
-const REDIS_IDX_NAME_PROPERTY = "redisearch.index.name"
 const REDIS_IDX_PROPERTY = "redisearch.index"
 const REDIS_GEO_KEYNAME_PROPERTY = "redis.geo.keyname"
 
