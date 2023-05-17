@@ -6,6 +6,8 @@ package cmd
 import (
 	"bufio"
 	"context"
+	elastic "filipecosta90/geo-bench/cmd/elasticsearch"
+	"filipecosta90/geo-bench/cmd/redis"
 	"fmt"
 	hdrhistogram "github.com/HdrHistogram/hdrhistogram-go"
 	"github.com/redis/rueidis"
@@ -27,19 +29,20 @@ var queryCmd = &cobra.Command{
 	Short: "Benchmark query operations of geographic coordinates.",
 	Long:  `This command covers querying operations of geographic coordinates.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		db, _ := cmd.Flags().GetString("db")
-		input, _ := cmd.Flags().GetString("input")
-		uri, _ := cmd.Flags().GetString("uri")
-		concurrency, _ := cmd.Flags().GetInt("concurrency")
-		testTime, _ := cmd.Flags().GetInt("test.time")
-		requests, _ := cmd.Flags().GetInt("requests")
-		seed, _ := cmd.Flags().GetInt("random.seed")
-		debugLevel, _ := cmd.Flags().GetInt("debug")
-		queryTimeout, _ := cmd.Flags().GetInt64("query-timeout")
-		redisGeoKeyname, _ := cmd.Flags().GetString(REDIS_GEO_KEYNAME_PROPERTY)
-		indexSearchName, _ := cmd.Flags().GetString(REDIS_IDX_NAME_PROPERTY)
-		inputType, _ := cmd.Flags().GetString("input-type")
-		queryType, _ := cmd.Flags().GetString("query-type")
+		pflags := cmd.Flags()
+		db, _ := pflags.GetString("db")
+		input, _ := pflags.GetString("input")
+		uri, _ := pflags.GetString("uri")
+		concurrency, _ := pflags.GetInt("concurrency")
+		testTime, _ := pflags.GetInt("test.time")
+		requests, _ := pflags.GetInt("requests")
+		seed, _ := pflags.GetInt("random.seed")
+		debugLevel, _ := pflags.GetInt("debug")
+		queryTimeout, _ := pflags.GetInt64("query-timeout")
+		redisGeoKeyname, _ := pflags.GetString(REDIS_GEO_KEYNAME_PROPERTY)
+		indexSearchName, _ := pflags.GetString(redis.REDIS_IDX_NAME_PROPERTY)
+		inputType, _ := pflags.GetString("input-type")
+		queryType, _ := pflags.GetString("query-type")
 
 		validateDB(db)
 		log.Printf("Using %d concurrent workers", concurrency)
@@ -97,7 +100,9 @@ var queryCmd = &cobra.Command{
 		var r = rand.New(rand.NewSource(int64(seed)))
 		var mu sync.Mutex
 
-		var geopoints uint64
+		var finishedCommands uint64 = 0
+		var issuedCommands uint64 = 0
+		var activeConns int64 = 0
 		// listen for C-c
 		controlC := make(chan os.Signal, 1)
 		signal.Notify(controlC, os.Interrupt)
@@ -108,16 +113,26 @@ var queryCmd = &cobra.Command{
 		for i := 0; i < concurrency; i++ {
 			// geoshape
 			if strings.Compare(inputType, INPUT_TYPE_GEOSHAPE) == 0 {
-				go queryWorkerGeoShape(uri, workQueue, complete, &geopoints, datapointsChan, uint64(nDatapoints), db, mu, r, indexSearchName, INDEX_FIELDNAME_GEOSHAPE, queryType, testTime, queryTimeout, debugLevel)
+				if strings.Compare(db, ELASTIC_TYPE_GENERIC) == 0 {
+					var elasticWrapper *elastic.ElasticWrapper = nil
+					c := elastic.ElasticCreator{}
+					elasticWrapper, err = c.Create(pflags, "run")
+					if err != nil {
+						log.Fatal(err)
+					}
+					go queryWorkerGeoshapeElastic(elasticWrapper, workQueue, complete, &issuedCommands, &finishedCommands, &activeConns, datapointsChan, uint64(nDatapoints), queryType, INDEX_FIELDNAME_GEOSHAPE, debugLevel)
+				} else {
+					go queryWorkerGeoShape(uri, workQueue, complete, &issuedCommands, datapointsChan, uint64(nDatapoints), db, indexSearchName, INDEX_FIELDNAME_GEOSHAPE, queryType, testTime, queryTimeout, debugLevel)
+				}
 				// geopoint
 			} else {
-				go queryWorkerGeoPoint(uri, workQueue, complete, &geopoints, datapointsChan, uint64(nDatapoints), db, mu, r, redisGeoKeyname, indexSearchName, INDEX_FIELDNAME_GEOPOINT, testTime)
+				go queryWorkerGeoPoint(uri, workQueue, complete, &issuedCommands, datapointsChan, uint64(nDatapoints), db, mu, r, redisGeoKeyname, indexSearchName, INDEX_FIELDNAME_GEOPOINT, testTime)
 			}
 			// delay the creation 1ms for each additional client
 			time.Sleep(time.Millisecond * 1)
 		}
 
-		_, _, duration, totalMessages, _, _, avgReplySize := updateCLI(tick, controlC, uint64(nDatapoints), false, datapointsChan, start, testTime)
+		_, _, duration, totalMessages, _, _, avgReplySize := updateCLI(tick, controlC, uint64(nDatapoints), &activeConns, false, datapointsChan, start, testTime)
 		messageRate := float64(totalMessages) / float64(duration.Seconds())
 		avgMs := float64(latencies.Mean()) / 1000.0
 		p50IngestionMs := float64(latencies.ValueAtQuantile(50.0)) / 1000.0
@@ -129,36 +144,25 @@ var queryCmd = &cobra.Command{
 		fmt.Printf("\n")
 		fmt.Printf("#################################################\n")
 		fmt.Printf("Total Duration %.3f Seconds\n", duration.Seconds())
-		fmt.Printf("Total Datapoints %d\n", totalCommands)
+		fmt.Printf("Total sent queries %d\n", totalCommands)
 		fmt.Printf("Total Errors %d\n", totalErrors)
 		fmt.Printf("Throughput summary: %.0f requests per second\n", messageRate)
 		fmt.Printf("Latency summary (msec):\n")
 		fmt.Printf("    %9s %9s %9s %9s\n", "avg", "p50", "p95", "p99")
 		fmt.Printf("    %9.3f %9.3f %9.3f %9.3f\n", avgMs, p50IngestionMs, p95IngestionMs, p99IngestionMs)
-		fmt.Println(fmt.Sprintf("Finished sending %d queries of type %s", geopoints, queryType))
+		fmt.Println(fmt.Sprintf("Finished sending %d queries of type %s", finishedCommands, queryType))
 	},
 }
 
 func init() {
 	rootCmd.AddCommand(queryCmd)
-	queryCmd.Flags().StringP("db", "", "redis", "Database to load the data to")
-	queryCmd.Flags().StringP("input", "i", "documents.json", "Input json file")
-	queryCmd.Flags().StringP("input-type", "", DEFAULT_INPUT_TYPE, "Input type. One of 'geopoint' or 'geoshape'")
-	queryCmd.Flags().StringP("query-type", "", DEFAULT_QUERY_TYPE, "Query type. Only used for 'geoshape' inputs. One of 'geoshape-contains' or 'geoshape-within'")
-	queryCmd.Flags().Int64P("query-timeout", "", DEFAULT_QUERY_TIMEOUT, "Query timeout in millis.")
-	queryCmd.Flags().IntP("concurrency", "c", 50, "Concurrency")
-	queryCmd.Flags().IntP("debug", "", 0, "debug level. O no debug.")
-	queryCmd.Flags().IntP("random.seed", "", 12345, "Random seed")
-	queryCmd.Flags().IntP("test.time", "", -1, "Number of seconds to run the test. . If -1 then it will use requests property")
-	queryCmd.Flags().IntP("requests", "n", -1, "Requests. If -1 then it will use all input datapoints")
-	queryCmd.Flags().StringP("uri", "u", "localhost:6379", "Server URI")
-	queryCmd.Flags().BoolP("cluster", "", false, "Enable cluster mode")
-	queryCmd.Flags().StringP(REDIS_IDX_NAME_PROPERTY, "", REDIS_DEFAULT_IDX_NAME, "redisearch secondary index name")
-	queryCmd.Flags().StringP(REDIS_GEO_KEYNAME_PROPERTY, "", REDIS_GEO_DEFAULT_KEYNAME, "redis GEO keyname")
+	pflags := queryCmd.Flags()
+	pflags.StringP("db", "", "redis", "Database to load the data to")
+	redis.PrepareRedisQueryCommandFlags(pflags)
+	elastic.RegisterElasticRunFlags(pflags)
 }
 
-func queryWorkerGeoShape(uri string, queue chan string, complete chan bool, ops *uint64, datapointsChan chan datapoint, totalDatapoints uint64, db string, mu sync.Mutex, r *rand.Rand, indexSearchName, fieldName, queryType string, testDuration int, queryTimeoutMillis int64, debugLevel int) {
-
+func queryWorkerGeoShape(uri string, queue chan string, complete chan bool, ops *uint64, datapointsChan chan datapoint, totalDatapoints uint64, db string, indexSearchName, fieldName, queryType string, testDuration int, queryTimeoutMillis int64, debugLevel int) {
 	c, err := rueidis.NewClient(rueidis.ClientOption{
 		InitAddress: []string{uri},
 	})
@@ -192,22 +196,7 @@ func queryWorkerGeoShape(uri string, queue chan string, complete chan bool, ops 
 			log.Fatal(fmt.Sprintf("Invalid query-type. Exiting..."))
 		}
 		startT := time.Now()
-		switch db {
-		case REDIS_TYPE_JSON:
-			innerRes, err1 := c.Do(ctx, c.B().FtSearch().Index(indexSearchName).Query(querySearch).Timeout(queryTimeoutMillis).Params().Nargs(2).NameValue().NameValue("poly", polygon).Dialect(3).Build()).ToArray()
-			err = err1
-			if len(innerRes) > 0 {
-				resultSetSize, err = innerRes[0].ToInt64()
-			}
-		case REDIS_TYPE_HASH:
-			innerRes, err1 := c.Do(ctx, c.B().FtSearch().Index(indexSearchName).Query(querySearch).Timeout(queryTimeoutMillis).Params().Nargs(2).NameValue().NameValue("poly", polygon).Dialect(3).Build()).ToArray()
-			err = err1
-			if len(innerRes) > 0 {
-				resultSetSize, err = innerRes[0].ToInt64()
-			}
-		default:
-			log.Fatal(fmt.Sprintf("DB was not recognized. Exiting..."))
-		}
+		err, resultSetSize = queryPolygon(db, c, ctx, indexSearchName, querySearch, queryTimeoutMillis, polygon, err, resultSetSize)
 		endT := time.Now()
 
 		duration := endT.Sub(startT)
@@ -221,6 +210,26 @@ func queryWorkerGeoShape(uri string, queue chan string, complete chan bool, ops 
 	}
 	// Let the main process know we're done.
 	complete <- true
+}
+
+func queryPolygon(db string, c rueidis.Client, ctx context.Context, indexSearchName string, querySearch string, queryTimeoutMillis int64, polygon string, err error, resultSetSize int64) (error, int64) {
+	switch db {
+	case REDIS_TYPE_JSON:
+		innerRes, err1 := c.Do(ctx, c.B().FtSearch().Index(indexSearchName).Query(querySearch).Timeout(queryTimeoutMillis).Params().Nargs(2).NameValue().NameValue("poly", polygon).Dialect(3).Build()).ToArray()
+		err = err1
+		if len(innerRes) > 0 {
+			resultSetSize, err = innerRes[0].ToInt64()
+		}
+	case REDIS_TYPE_HASH:
+		innerRes, err1 := c.Do(ctx, c.B().FtSearch().Index(indexSearchName).Query(querySearch).Timeout(queryTimeoutMillis).Params().Nargs(2).NameValue().NameValue("poly", polygon).Dialect(3).Build()).ToArray()
+		err = err1
+		if len(innerRes) > 0 {
+			resultSetSize, err = innerRes[0].ToInt64()
+		}
+	default:
+		log.Fatal(fmt.Sprintf("DB was not recognized. Exiting..."))
+	}
+	return err, resultSetSize
 }
 
 func queryWorkerGeoPoint(uri string, queue chan string, complete chan bool, ops *uint64, datapointsChan chan datapoint, totalDatapoints uint64, db string, mu sync.Mutex, r *rand.Rand, redisGeoKeyname string, indexSearchName string, fieldName string, testDuration int) {

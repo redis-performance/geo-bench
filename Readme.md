@@ -62,7 +62,7 @@ wget -c https://github.com/redis-performance/geo-bench/releases/latest/download/
 
 ### GeoPolygons
 
-#### Load data
+#### Load data in Redis
 ```bash
 # get dataset ( around 30GB uncompressed )
 wget https://s3.us-east-2.amazonaws.com/redis.benchmarks.spec/datasets/geoshape/polygons.json.bz2
@@ -75,9 +75,34 @@ wget -c https://github.com/redis-performance/geo-bench/releases/latest/download/
 ./geo-bench load --input-type geoshape --input polygons.json -n 1000000 --db redisearch-hash
 ```
 
-#### Query data
+#### Query data in Redis
 
 ```bash
 # load 1st 1M polygons
-./geo-bench query --input-type geoshape --input polygons.json --db redisearch-hash -n 10000 --query-type geoshape-contains
+./geo-bench query --db redisearch-hash --input polygons.json -c 50 --input-type geoshape -n 10000 --query-type geoshape-within
 ```
+
+
+
+#### Load data in ElasticSearch 
+```bash
+sudo sysctl -w vm.max_map_count=262144
+docker run -p 9200:9200 -p 9300:9300 -e "ELASTIC_PASSWORD=password"  docker.elastic.co/elasticsearch/elasticsearch:8.7.1
+./geo-bench load --db elasticsearch --input polygons.json -c 50 --input-type geoshape --es.password password --es.bulk.batch.size 100
+
+# confirm you've got the expected doc count
+$ curl -k --user "elastic:password" -X GET "https://localhost:9200/geo/_count?pretty" -H 'Content-Type: application/json'
+
+# check the memory usage of that index
+$ curl -k --user "elastic:password" -X GET "https://localhost:9200/geo/_stats?pretty" -H 'Content-Type: application/json'
+
+```
+
+#### Query data in ElasticSearch
+
+```bash
+# load 1st 1M polygons
+./geo-bench query --db elasticsearch --input polygons.json -c 50 --input-type geoshape --es.password password -n 10000 --query-type geoshape-within
+```
+
+
