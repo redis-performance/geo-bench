@@ -29,11 +29,14 @@ const DEFAULT_QUERY_TYPE = QUERY_TYPE_GEOSHAPE_CONTAINS
 const DEFAULT_QUERY_TIMEOUT = 10000
 const REDIS_IDX_NAME_PROPERTY = "redisearch.index.name"
 const REDIS_URI_PROPERTY = "redis.uri"
+const REDIS_PASSWORD_PROPERTY = "redis.password"
+const REDIS_PASSWORD_PROPERTY_DEFAULT = ""
 const REDIS_CLUSTER_PROPERTY = "redis.cluster"
 const REDIS_URI_PROPERTY_DEFAULT = "localhost:6379"
 
 func RegisterRedisLoadFlags(flags *pflag.FlagSet) {
 	flags.StringP(REDIS_URI_PROPERTY, "u", REDIS_URI_PROPERTY_DEFAULT, "Server URI")
+	flags.StringP(REDIS_PASSWORD_PROPERTY, "", REDIS_PASSWORD_PROPERTY_DEFAULT, "Server Password")
 	flags.BoolP(REDIS_CLUSTER_PROPERTY, "", false, "Enable cluster mode")
 	flags.BoolP(REDIS_IDX_PROPERTY, "", true, "Enable redisearch secondary index on HASH and JSON datatypes")
 	flags.StringP(REDIS_IDX_NAME_PROPERTY, "", REDIS_DEFAULT_IDX_NAME, "redisearch secondary index name")
@@ -50,7 +53,8 @@ func PrepareRedisQueryCommandFlags(pflags *pflag.FlagSet) {
 	pflags.IntP("random.seed", "", 12345, "Random seed")
 	pflags.IntP("test.time", "", -1, "Number of seconds to run the test. . If -1 then it will use requests property")
 	pflags.IntP("requests", "n", -1, "Requests. If -1 then it will use all input datapoints")
-	pflags.StringP("uri", "u", "localhost:6379", "Server URI")
+	pflags.StringP(REDIS_URI_PROPERTY, "u", REDIS_URI_PROPERTY_DEFAULT, "Server URI")
+	pflags.StringP(REDIS_PASSWORD_PROPERTY, "", REDIS_PASSWORD_PROPERTY_DEFAULT, "Server Password")
 	pflags.BoolP("cluster", "", false, "Enable cluster mode")
 	pflags.StringP(REDIS_IDX_NAME_PROPERTY, "", REDIS_DEFAULT_IDX_NAME, "redisearch secondary index name")
 	pflags.StringP(REDIS_GEO_KEYNAME_PROPERTY, "", REDIS_GEO_DEFAULT_KEYNAME, "redis GEO keyname")
