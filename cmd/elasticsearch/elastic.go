@@ -10,6 +10,8 @@ import (
 	"github.com/elastic/go-elasticsearch/v8"
 	"github.com/elastic/go-elasticsearch/v8/esapi"
 	"github.com/elastic/go-elasticsearch/v8/esutil"
+	_ "github.com/elastic/go-elasticsearch/v8/typedapi/types"
+
 	"github.com/spf13/pflag"
 	"net"
 	"net/http"
@@ -52,14 +54,55 @@ const (
 )
 
 type ElasticWrapper struct {
-	cli       *elasticsearch.Client
-	bi        esutil.BulkIndexer
-	indexName string
-	verbose   bool
+	cli         *elasticsearch.Client
+	typedClient *elasticsearch.TypedClient
+	bi          esutil.BulkIndexer
+	indexName   string
+	verbose     bool
 }
 
 func (m *ElasticWrapper) CleanupThread(ctx context.Context) {
 	m.bi.Close(ctx)
+}
+
+// Insert a document.
+func (m *ElasticWrapper) QueryPolygon(ctx context.Context, relation string, fieldname string, polygon string, finishedCommands *uint64, debug int) (err error, resultSetSize int64) {
+	if err != nil {
+		if m.verbose {
+			fmt.Printf("Cannot encode document %s: %s\n", fieldname, err.Error())
+		}
+		return
+	}
+	query := []byte(`{
+  "query": {
+    "bool": {
+      "must": {
+        "match_all": {}
+      },
+      "filter": {
+        "geo_shape": {
+          "shape": {
+            "shape": "` + polygon + `",
+            "relation": "` + relation + `"
+          }
+        }
+      }
+    }
+  }
+}`)
+	// convert byte slice to io.Reader
+	reader := bytes.NewReader(query)
+	res, err := m.typedClient.Search().Raw(reader).Do(ctx)
+	if err != nil {
+		fmt.Printf("Unexpected error while querying: %s\n", err.Error())
+		return
+	}
+	if debug > 0 {
+		fmt.Printf("Send query: %s.\n\n\n\t\tReceived Hits %d\n", query, res.Hits.Total.Value)
+	}
+	resultSetSize = res.Hits.Total.Value
+	atomic.AddUint64(finishedCommands, 1)
+	return
 }
 
 // Insert a document.
@@ -108,6 +151,17 @@ func (m *ElasticWrapper) InsertPolygon(ctx context.Context, documentId string, f
 }
 
 type ElasticCreator struct {
+}
+
+func RegisterElasticRunFlags(flags *pflag.FlagSet) {
+	flags.IntP(elasticMaxRetriesProp, "", elasticMaxRetriesPropDefault, "'")
+	flags.StringP(elasticUrl, "", elasticUrlDefault, "")
+	flags.StringP(elasticUsername, "", elasticUsernameDefault, "")
+	flags.StringP(elasticPassword, "", elasticPasswordPropDefault, "")
+	flags.StringP(elasticIndexName, "", elasticIndexNameDefault, "")
+	flags.StringP(elasticIndexFieldName, "", elasticIndexFieldNameDefault, "")
+	flags.BoolP(elasticInsecureSSLProp, "", elasticInsecureSSLPropDefault, "")
+	flags.BoolP("verbose", "", false, "")
 }
 
 func RegisterElasticLoadFlags(flags *pflag.FlagSet) {
@@ -188,6 +242,7 @@ func (c ElasticCreator) Create(p *pflag.FlagSet, command string) (*ElasticWrappe
 		},
 	}
 	es, err := elasticsearch.NewClient(cfg)
+	tes, err := elasticsearch.NewTypedClient(cfg)
 	if err != nil {
 		fmt.Println(fmt.Sprintf("Error creating the ElasticWrapper client: %s", err))
 		return nil, err
@@ -261,10 +316,11 @@ func (c ElasticCreator) Create(p *pflag.FlagSet, command string) (*ElasticWrappe
 	}
 
 	m := &ElasticWrapper{
-		cli:       es,
-		bi:        bi,
-		indexName: iname,
-		verbose:   verbose,
+		cli:         es,
+		typedClient: tes,
+		bi:          bi,
+		indexName:   iname,
+		verbose:     verbose,
 	}
 	return m, nil
 }

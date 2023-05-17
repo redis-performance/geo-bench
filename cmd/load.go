@@ -430,6 +430,31 @@ func loadWorkerGeoshapeElastic(ec *elastic.ElasticWrapper, queue chan string, co
 	complete <- true
 }
 
+func queryWorkerGeoshapeElastic(ec *elastic.ElasticWrapper, queue chan string, complete chan bool, sentCommands, finishedCommands *uint64, activeConns *int64, datapointsChan chan datapoint, totalDatapoints uint64, queryType, fieldName string, debug int) {
+	relation := "contains"
+	if strings.Compare(queryType, "geoshape-within") == 0 {
+		relation = "within"
+	}
+	atomic.AddInt64(activeConns, 1)
+	ctx := context.Background()
+	for line := range queue {
+		polygon := lineToPolygon(line)
+		previousOpsVal := atomic.LoadUint64(sentCommands)
+		if previousOpsVal >= totalDatapoints {
+			break
+		}
+		startT := time.Now()
+		err, resSize := ec.QueryPolygon(ctx, relation, fieldName, polygon, finishedCommands, debug)
+		endT := time.Now()
+		duration := endT.Sub(startT)
+		datapointsChan <- datapoint{!(err != nil), duration.Microseconds(), resSize}
+	}
+	ec.CleanupThread(ctx)
+	atomic.AddInt64(activeConns, -1)
+	// Let the main process know we're done.
+	complete <- true
+}
+
 func loadWorkerGeoshape(uri string, queue chan string, complete chan bool, ops *uint64, datapointsChan chan datapoint, totalDatapoints uint64, db string, fieldName string) {
 	c, err := rueidis.NewClient(rueidis.ClientOption{
 		InitAddress: []string{uri},
