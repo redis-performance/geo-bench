@@ -62,7 +62,7 @@ wget -c https://github.com/redis-performance/geo-bench/releases/latest/download/
 
 ### GeoPolygons
 
-#### Load data in Redis
+#### Retrieve input data and tool
 ```bash
 # get dataset ( around 30GB uncompressed )
 wget https://s3.us-east-2.amazonaws.com/redis.benchmarks.spec/datasets/geoshape/polygons.json.bz2
@@ -70,25 +70,35 @@ bzip2 -d polygons.json.bz2
 
 # get tool
 wget -c https://github.com/redis-performance/geo-bench/releases/latest/download/geo-bench-$(uname -mrs | awk '{ print tolower($1) }')-$(dpkg --print-architecture).tar.gz -O - | tar -xz
+```
 
-# load 1st 1M polygons
-./geo-bench load --input-type geoshape --input polygons.json -n 1000000 --db redisearch-hash
+#### Load data in Redis
+```bash
+# load 1st 100K polygons
+./geo-bench load --input-type geoshape --input polygons.json -n 100000 --db redisearch-hash
 ```
 
 #### Query data in Redis
 
 ```bash
-# load 1st 1M polygons
+# send 10K queries of type within
 ./geo-bench query --db redisearch-hash --input polygons.json -c 50 --input-type geoshape -n 10000 --query-type geoshape-within
 ```
 
 
 
 #### Load data in ElasticSearch 
+
+Spin up Elastic locally
 ```bash
 sudo sysctl -w vm.max_map_count=262144
 docker run -p 9200:9200 -p 9300:9300 -e "ELASTIC_PASSWORD=password"  docker.elastic.co/elasticsearch/elasticsearch:8.7.1
-./geo-bench load --db elasticsearch --input polygons.json -c 50 --input-type geoshape --es.password password --es.bulk.batch.size 100
+```
+
+Load the data
+```bash
+# load 1st 100K polygons
+./geo-bench load --db elasticsearch --input polygons.json -c 50 -n 100000 --input-type geoshape --es.password password --es.bulk.batch.size 100
 
 # confirm you've got the expected doc count
 $ curl -k --user "elastic:password" -X GET "https://localhost:9200/geo/_count?pretty" -H 'Content-Type: application/json'
@@ -101,7 +111,7 @@ $ curl -k --user "elastic:password" -X GET "https://localhost:9200/geo/_stats?pr
 #### Query data in ElasticSearch
 
 ```bash
-# load 1st 1M polygons
+# send 10K queries of type within
 ./geo-bench query --db elasticsearch --input polygons.json -c 50 --input-type geoshape --es.password password -n 10000 --query-type geoshape-within
 ```
 
