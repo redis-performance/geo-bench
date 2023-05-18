@@ -6,6 +6,7 @@ package cmd
 import (
 	"bufio"
 	"context"
+	"encoding/csv"
 	elastic "filipecosta90/geo-bench/cmd/elasticsearch"
 	"filipecosta90/geo-bench/cmd/redis"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 	"math/rand"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -44,6 +46,7 @@ var queryCmd = &cobra.Command{
 		password, _ := pflags.GetString(redis.REDIS_PASSWORD_PROPERTY)
 		inputType, _ := pflags.GetString("input-type")
 		queryType, _ := pflags.GetString("query-type")
+		replyHistogram, _ := pflags.GetString("reply-histogram-csv")
 
 		validateDB(db)
 		log.Printf("Using %d concurrent workers", concurrency)
@@ -133,7 +136,7 @@ var queryCmd = &cobra.Command{
 			time.Sleep(time.Millisecond * 1)
 		}
 
-		_, _, duration, totalMessages, _, _, avgReplySize := updateCLI(tick, controlC, uint64(nDatapoints), &activeConns, false, datapointsChan, start, testTime)
+		_, _, duration, totalMessages, _, histogramReplySize, avgReplySize := updateCLI(tick, controlC, uint64(nDatapoints), &activeConns, false, datapointsChan, start, testTime)
 		messageRate := float64(totalMessages) / float64(duration.Seconds())
 		avgMs := float64(latencies.Mean()) / 1000.0
 		p50IngestionMs := float64(latencies.ValueAtQuantile(50.0)) / 1000.0
@@ -152,6 +155,29 @@ var queryCmd = &cobra.Command{
 		fmt.Printf("    %9s %9s %9s %9s\n", "avg", "p50", "p95", "p99")
 		fmt.Printf("    %9.3f %9.3f %9.3f %9.3f\n", avgMs, p50IngestionMs, p95IngestionMs, p99IngestionMs)
 		fmt.Println(fmt.Sprintf("Finished sending %d queries of type %s", finishedCommands, queryType))
+
+		if replyHistogram != "" {
+			// sort reply sizes to be able to produce an ordered csv
+			var replySizes []int
+			for k := range histogramReplySize {
+				replySizes = append(replySizes, k)
+			}
+			sort.Sort(sort.Reverse(sort.IntSlice(replySizes)))
+
+			fmt.Println(fmt.Sprintf("Storing csv file with reply size histogram in %s", replyHistogram))
+			csvFile, err := os.Create(replyHistogram)
+
+			if err != nil {
+				log.Fatalf("Failed creating csv file: %s", err)
+			}
+			csvwriter := csv.NewWriter(csvFile)
+			_ = csvwriter.Write([]string{"reply_size", "count"})
+			for replyCount := range replySizes {
+				_ = csvwriter.Write([]string{fmt.Sprintf("%d", replyCount), fmt.Sprintf("%d", histogramReplySize[replyCount])})
+			}
+			csvwriter.Flush()
+			csvFile.Close()
+		}
 	},
 }
 
@@ -159,6 +185,7 @@ func init() {
 	rootCmd.AddCommand(queryCmd)
 	pflags := queryCmd.Flags()
 	pflags.StringP("db", "", "redis", "Database to load the data to")
+	pflags.StringP("reply-histogram-csv", "", "", "Store reply size data into a csv file. If empty wont store it.")
 	redis.PrepareRedisQueryCommandFlags(pflags)
 	elastic.RegisterElasticRunFlags(pflags)
 }

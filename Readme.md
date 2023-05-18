@@ -105,7 +105,6 @@ $ curl -k --user "elastic:password" -X GET "https://localhost:9200/geo/_count?pr
 
 # check the memory usage of that index
 $ curl -k --user "elastic:password" -X GET "https://localhost:9200/geo/_stats?pretty" -H 'Content-Type: application/json'
-
 ```
 
 #### Query data in ElasticSearch

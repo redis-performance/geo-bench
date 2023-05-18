@@ -28,3 +28,7 @@ geo-bench
 
 # coverage
 coverage.txt
+
+# csv file
+*.csv
+
