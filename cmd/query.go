@@ -214,7 +214,6 @@ func queryWorkerGeoShape(uri, password string, queue chan string, complete chan 
 			break
 		}
 
-		var resultSetSize int64 = 0
 		querySearch := ""
 		switch queryType {
 		case QUERY_TYPE_GEOSHAPE_CONTAINS:
@@ -226,8 +225,9 @@ func queryWorkerGeoShape(uri, password string, queue chan string, complete chan 
 		default:
 			log.Fatal(fmt.Sprintf("Invalid query-type. Exiting..."))
 		}
+		var resultSetSize int64 = 0
 		startT := time.Now()
-		err, resultSetSize = queryPolygon(db, c, ctx, indexSearchName, querySearch, queryTimeoutMillis, polygon, err, resultSetSize)
+		err, resultSetSize = queryPolygon(db, c, ctx, indexSearchName, querySearch, queryTimeoutMillis, polygon, debugLevel)
 		endT := time.Now()
 
 		duration := endT.Sub(startT)
@@ -243,24 +243,46 @@ func queryWorkerGeoShape(uri, password string, queue chan string, complete chan 
 	complete <- true
 }
 
-func queryPolygon(db string, c rueidis.Client, ctx context.Context, indexSearchName string, querySearch string, queryTimeoutMillis int64, polygon string, err error, resultSetSize int64) (error, int64) {
+func queryPolygon(db string, c rueidis.Client, ctx context.Context, indexSearchName string, querySearch string, queryTimeoutMillis int64, polygon string, debuglevel int) (err error, resultSetSize int64) {
+	resultSetSize = 0
+	var redisReply []rueidis.RedisMessage
 	switch db {
 	case REDIS_TYPE_JSON:
-		innerRes, err1 := c.Do(ctx, c.B().FtSearch().Index(indexSearchName).Query(querySearch).Timeout(queryTimeoutMillis).Params().Nargs(2).NameValue().NameValue("poly", polygon).Dialect(3).Build()).ToArray()
-		err = err1
-		if len(innerRes) > 0 {
-			resultSetSize, err = innerRes[0].ToInt64()
+		redisReply, err = c.Do(ctx, c.B().FtSearch().Index(indexSearchName).Query(querySearch).Timeout(queryTimeoutMillis).Params().Nargs(2).NameValue().NameValue("poly", polygon).Dialect(3).Build()).ToArray()
+		if len(redisReply) > 0 {
+			resultSetSize, err = redisReply[0].ToInt64()
+		}
+		if debuglevel > 0 {
+			verbosePrintRediSearchReply(querySearch, polygon, resultSetSize, redisReply)
 		}
 	case REDIS_TYPE_HASH:
-		innerRes, err1 := c.Do(ctx, c.B().FtSearch().Index(indexSearchName).Query(querySearch).Timeout(queryTimeoutMillis).Params().Nargs(2).NameValue().NameValue("poly", polygon).Dialect(3).Build()).ToArray()
-		err = err1
-		if len(innerRes) > 0 {
-			resultSetSize, err = innerRes[0].ToInt64()
+		query := c.B().FtSearch().Index(indexSearchName).Query(querySearch).Timeout(queryTimeoutMillis).Params().Nargs(2).NameValue().NameValue("poly", polygon).Dialect(3).Build()
+		redisReply, err = c.Do(ctx, query).ToArray()
+		if len(redisReply) > 0 {
+			resultSetSize, err = redisReply[0].ToInt64()
+		}
+		if debuglevel > 0 {
+			verbosePrintRediSearchReply(querySearch, polygon, resultSetSize, redisReply)
 		}
 	default:
 		log.Fatal(fmt.Sprintf("DB was not recognized. Exiting..."))
 	}
 	return err, resultSetSize
+}
+
+func verbosePrintRediSearchReply(querySearch string, polygon string, resultSetSize int64, redisReply []rueidis.RedisMessage) {
+	fmt.Printf("QUERY: %s PARAMS %s %s. Reply (size %d):\n", querySearch, "poly", polygon, resultSetSize)
+	docsReply := redisReply[1:]
+	ndocs := len(docsReply) / 2
+	for i := 0; i < ndocs; i++ {
+		docId, _ := docsReply[i*2].ToString()
+		docArr, _ := docsReply[i*2+1].ToArray()
+		fmt.Printf("\tDoc: %s\n", docId)
+		for _, ele := range docArr {
+			eleS, _ := ele.ToString()
+			fmt.Printf("\t\t%s\n", eleS)
+		}
+	}
 }
 
 func queryWorkerGeoPoint(uri, password string, queue chan string, complete chan bool, ops *uint64, datapointsChan chan datapoint, totalDatapoints uint64, db string, mu sync.Mutex, r *rand.Rand, redisGeoKeyname string, indexSearchName string, fieldName string, testDuration int) {
