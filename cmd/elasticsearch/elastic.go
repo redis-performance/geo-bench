@@ -67,6 +67,7 @@ func (m *ElasticWrapper) CleanupThread(ctx context.Context) {
 
 // Insert a document.
 func (m *ElasticWrapper) QueryPolygon(ctx context.Context, relation string, fieldname string, polygon string, finishedCommands *uint64, debug int) (err error, resultSetSize int64) {
+	resultSetSize = 0
 	if err != nil {
 		if m.verbose {
 			fmt.Printf("Cannot encode document %s: %s\n", fieldname, err.Error())
@@ -97,10 +98,16 @@ func (m *ElasticWrapper) QueryPolygon(ctx context.Context, relation string, fiel
 		fmt.Printf("Unexpected error while querying: %s\n", err.Error())
 		return
 	}
-	if debug > 0 {
-		fmt.Printf("Send query: %s.\n\n\n\t\tReceived Hits %d\n", query, res.Hits.Total.Value)
-	}
 	resultSetSize = res.Hits.Total.Value
+
+	if debug > 0 {
+		hits := res.Hits.Hits
+		fmt.Printf("Send query: %s.\n\tReceived Hits %d\n", query, resultSetSize)
+		for _, hit := range hits {
+			fmt.Printf("\t\thit: %s\n", hit.Source_)
+		}
+	}
+
 	atomic.AddUint64(finishedCommands, 1)
 	return
 }
