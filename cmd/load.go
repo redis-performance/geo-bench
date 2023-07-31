@@ -264,14 +264,14 @@ func setupStageGeoPoint(uri, password, db string, indexSearch bool, indexName, f
 	log.Printf("Finished setup stage for %s DB\n", db)
 }
 
-func updateCLI(tick *time.Ticker, c chan os.Signal, message_limit uint64, activeConnsPtr *int64, loop bool, datapointsChan chan datapoint, start time.Time, testTime int) (bool, time.Time, time.Duration, uint64, []float64, map[int]int, float64) {
+func updateCLI(tick *time.Ticker, c chan os.Signal, message_limit uint64, activeConnsPtr *int64, loop bool, datapointsChan chan datapoint, start time.Time, testTime int) (bool, time.Time, time.Duration, uint64, []float64, map[int64]int64, float64) {
 	var currentErr uint64 = 0
 	var currentCount uint64 = 0
 	var currentReplySize int64 = 0
 	prevTime := time.Now()
 	prevMessageCount := uint64(0)
 	messageRateTs := []float64{}
-	var histogram = make(map[int]int)
+	var histogram = make(map[int64]int64)
 	var dp datapoint
 	fmt.Printf("%26s %7s %25s %25s %7s %25s %25s %25s\n", "Test time", " ", "Total Commands", "Total Errors", "", "Command Rate", "p50 lat. (msec)", "Active Conns")
 	for {
@@ -288,7 +288,7 @@ func updateCLI(tick *time.Ticker, c chan os.Signal, message_limit uint64, active
 					currentErr++
 				}
 				currentCount++
-				histogram[int(dp.resultset_size)]++
+				histogram[int64(dp.resultset_size)]++
 				currentReplySize += dp.resultset_size
 			}
 		case <-tick.C:
@@ -425,6 +425,7 @@ func loadWorkerGeoshapeElastic(ec *elastic.ElasticWrapper, queue chan string, co
 	ctx := context.Background()
 	for line := range queue {
 		polygon := lineToPolygon(line)
+
 		previousOpsVal := atomic.LoadUint64(ops)
 		if previousOpsVal >= totalDatapoints {
 			break

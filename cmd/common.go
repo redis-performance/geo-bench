@@ -35,7 +35,8 @@ type GeoPoint struct {
 }
 
 type GeoShape struct {
-	Shape string `json:"shape"`
+	Shape   string `json:"shape"`
+	NPoints int64  `json:"npoints"`
 }
 
 func lineToLonLat(line string) (float64, float64) {

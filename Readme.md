@@ -68,6 +68,14 @@ wget -c https://github.com/redis-performance/geo-bench/releases/latest/download/
 wget https://s3.us-east-2.amazonaws.com/redis.benchmarks.spec/datasets/geoshape/polygons.json.bz2
 bzip2 -d polygons.json.bz2
 
+# get 100K dataset ( around 3GB uncompressed )
+wget https://s3.us-east-2.amazonaws.com/redis.benchmarks.spec/datasets/geoshape/polygons.100k.json.bz2
+bzip2 -d polygons.100k.json.bz2
+
+# get a simplified version of the 100K polygons
+wget https://s3.us-east-2.amazonaws.com/redis.benchmarks.spec/datasets/geoshape/polygons.100k.simplified-threshold-0.001.json.bz2
+bzip2 -d polygons.100k.simplified-threshold-0.001.json.bz2
+
 # get tool
 wget -c https://github.com/redis-performance/geo-bench/releases/latest/download/geo-bench-$(uname -mrs | awk '{ print tolower($1) }')-$(dpkg --print-architecture).tar.gz -O - | tar -xz
 ```
