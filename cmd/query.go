@@ -157,28 +157,35 @@ var queryCmd = &cobra.Command{
 		fmt.Println(fmt.Sprintf("Finished sending %d queries of type %s", finishedCommands, queryType))
 
 		if replyHistogram != "" {
-			// sort reply sizes to be able to produce an ordered csv
-			var replySizes []int
-			for k := range histogramReplySize {
-				replySizes = append(replySizes, k)
-			}
-			sort.Sort(sort.Reverse(sort.IntSlice(replySizes)))
-
-			fmt.Println(fmt.Sprintf("Storing csv file with reply size histogram in %s", replyHistogram))
-			csvFile, err := os.Create(replyHistogram)
-
-			if err != nil {
-				log.Fatalf("Failed creating csv file: %s", err)
-			}
-			csvwriter := csv.NewWriter(csvFile)
-			_ = csvwriter.Write([]string{"reply_size", "count"})
-			for replyCount := range replySizes {
-				_ = csvwriter.Write([]string{fmt.Sprintf("%d", replyCount), fmt.Sprintf("%d", histogramReplySize[replyCount])})
-			}
-			csvwriter.Flush()
-			csvFile.Close()
+			saveHistogram(replyHistogram, histogramReplySize)
 		}
 	},
+}
+
+func saveHistogram(replyHistogram string, histogramReplySize map[int64]int64) {
+	// sort reply sizes to be able to produce an ordered csv
+	var replySizes []int
+	for k := range histogramReplySize {
+		replySizes = append(replySizes, int(k))
+	}
+	sort.Sort(sort.Reverse(sort.IntSlice(replySizes)))
+
+	fmt.Println(fmt.Sprintf("Storing csv file with reply size histogram in %s", replyHistogram))
+	csvFile, err := os.Create(replyHistogram)
+
+	if err != nil {
+		log.Fatalf("Failed creating csv file: %s", err)
+	}
+	csvwriter := csv.NewWriter(csvFile)
+	_ = csvwriter.Write([]string{"reply_size", "count"})
+	for value := range replySizes {
+		ocurrences := histogramReplySize[int64(value)]
+		if ocurrences > 0 {
+			_ = csvwriter.Write([]string{fmt.Sprintf("%d ", value), fmt.Sprintf(" %d", ocurrences)})
+		}
+	}
+	csvwriter.Flush()
+	csvFile.Close()
 }
 
 func init() {
