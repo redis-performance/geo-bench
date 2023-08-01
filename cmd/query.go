@@ -40,7 +40,7 @@ var queryCmd = &cobra.Command{
 		requests, _ := pflags.GetInt("requests")
 		seed, _ := pflags.GetInt("random.seed")
 		debugLevel, _ := pflags.GetInt("debug")
-		queryTimeout, _ := pflags.GetInt64("query-timeout")
+		queryTimeout, _ := pflags.GetInt64(redis.REDIS_COMMAND_TIMEOUT)
 		redisGeoKeyname, _ := pflags.GetString(REDIS_GEO_KEYNAME_PROPERTY)
 		indexSearchName, _ := pflags.GetString(redis.REDIS_IDX_NAME_PROPERTY)
 		password, _ := pflags.GetString(redis.REDIS_PASSWORD_PROPERTY)
@@ -236,11 +236,10 @@ func queryWorkerGeoShape(uri, password string, queue chan string, complete chan 
 		startT := time.Now()
 		err, resultSetSize = queryPolygon(db, c, ctx, indexSearchName, querySearch, queryTimeoutMillis, polygon, debugLevel)
 		endT := time.Now()
-
 		duration := endT.Sub(startT)
 
 		if debugLevel > 0 && err != nil {
-			log.Printf("Error reply: %v", err.Error())
+			log.Printf("Error reply: %v. with the following query %s and polygon: %s", err.Error(), querySearch, polygon)
 		}
 		atomic.AddUint64(ops, 1)
 		datapointsChan <- datapoint{!(err != nil), duration.Microseconds(), resultSetSize}
@@ -259,7 +258,7 @@ func queryPolygon(db string, c rueidis.Client, ctx context.Context, indexSearchN
 		if len(redisReply) > 0 {
 			resultSetSize, err = redisReply[0].ToInt64()
 		}
-		if debuglevel > 0 {
+		if debuglevel > 1 {
 			verbosePrintRediSearchReply(querySearch, polygon, resultSetSize, redisReply)
 		}
 	case REDIS_TYPE_HASH:
@@ -268,7 +267,7 @@ func queryPolygon(db string, c rueidis.Client, ctx context.Context, indexSearchN
 		if len(redisReply) > 0 {
 			resultSetSize, err = redisReply[0].ToInt64()
 		}
-		if debuglevel > 0 {
+		if debuglevel > 1 {
 			verbosePrintRediSearchReply(querySearch, polygon, resultSetSize, redisReply)
 		}
 	default:

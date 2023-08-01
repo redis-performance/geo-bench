@@ -39,6 +39,7 @@ var loadCmd = &cobra.Command{
 		inputType, _ := pflags.GetString("input-type")
 		concurrency, _ := pflags.GetInt("concurrency")
 		requests, _ := pflags.GetInt("requests")
+		debugLevel, _ := pflags.GetInt("debug")
 
 		validateDB(db)
 		log.Printf("Using %d concurrent workers to ingest datapoints", concurrency)
@@ -138,7 +139,7 @@ var loadCmd = &cobra.Command{
 					go loadWorkerGeoshapeElastic(elasticWrapper, workQueue, complete, &issuedCommands, &finishedCommands, &activeConns, datapointsChan, uint64(nDatapoints), INDEX_FIELDNAME_GEOSHAPE)
 				} else {
 					uri, _ := pflags.GetString(redis.REDIS_URI_PROPERTY)
-					go loadWorkerGeoshape(uri, password, workQueue, complete, &finishedCommands, datapointsChan, uint64(nDatapoints), db, INDEX_FIELDNAME_GEOSHAPE)
+					go loadWorkerGeoshape(uri, password, workQueue, complete, &finishedCommands, datapointsChan, uint64(nDatapoints), db, INDEX_FIELDNAME_GEOSHAPE, debugLevel)
 				}
 				// geopoint
 			} else {
@@ -469,7 +470,7 @@ func queryWorkerGeoshapeElastic(ec *elastic.ElasticWrapper, queue chan string, c
 	complete <- true
 }
 
-func loadWorkerGeoshape(uri, password string, queue chan string, complete chan bool, ops *uint64, datapointsChan chan datapoint, totalDatapoints uint64, db string, fieldName string) {
+func loadWorkerGeoshape(uri, password string, queue chan string, complete chan bool, ops *uint64, datapointsChan chan datapoint, totalDatapoints uint64, db string, fieldName string, debugLevel int) {
 	c, err := rueidis.NewClient(rueidis.ClientOption{
 		InitAddress:  []string{uri},
 		DisableCache: true,
@@ -494,7 +495,7 @@ func loadWorkerGeoshape(uri, password string, queue chan string, complete chan b
 		opsVal := atomic.AddUint64(ops, 1)
 		documentId := fmt.Sprintf("%d", opsVal)
 		startT := time.Now()
-		err = r.InsertPolygon(ctx, documentId, fieldName, polygon)
+		err = r.InsertPolygon(ctx, documentId, fieldName, polygon, debugLevel)
 		endT := time.Now()
 		duration := endT.Sub(startT)
 
