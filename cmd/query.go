@@ -41,6 +41,7 @@ var queryCmd = &cobra.Command{
 		seed, _ := pflags.GetInt("random.seed")
 		debugLevel, _ := pflags.GetInt("debug")
 		queryTimeout, _ := pflags.GetInt64(redis.REDIS_COMMAND_TIMEOUT)
+		connWriteTimeout := time.Duration(queryTimeout) * time.Millisecond
 		redisGeoKeyname, _ := pflags.GetString(REDIS_GEO_KEYNAME_PROPERTY)
 		indexSearchName, _ := pflags.GetString(redis.REDIS_IDX_NAME_PROPERTY)
 		password, _ := pflags.GetString(redis.REDIS_PASSWORD_PROPERTY)
@@ -126,11 +127,11 @@ var queryCmd = &cobra.Command{
 					}
 					go queryWorkerGeoshapeElastic(elasticWrapper, workQueue, complete, &issuedCommands, &finishedCommands, &activeConns, datapointsChan, uint64(nDatapoints), queryType, INDEX_FIELDNAME_GEOSHAPE, debugLevel)
 				} else {
-					go queryWorkerGeoShape(uri, password, workQueue, complete, &issuedCommands, datapointsChan, uint64(nDatapoints), db, indexSearchName, INDEX_FIELDNAME_GEOSHAPE, queryType, testTime, queryTimeout, debugLevel)
+					go queryWorkerGeoShape(uri, password, workQueue, complete, &issuedCommands, datapointsChan, uint64(nDatapoints), db, indexSearchName, INDEX_FIELDNAME_GEOSHAPE, queryType, testTime, queryTimeout, debugLevel, connWriteTimeout)
 				}
 				// geopoint
 			} else {
-				go queryWorkerGeoPoint(uri, password, workQueue, complete, &issuedCommands, datapointsChan, uint64(nDatapoints), db, mu, r, redisGeoKeyname, indexSearchName, INDEX_FIELDNAME_GEOPOINT, testTime)
+				go queryWorkerGeoPoint(uri, password, workQueue, complete, &issuedCommands, datapointsChan, uint64(nDatapoints), db, mu, r, redisGeoKeyname, indexSearchName, INDEX_FIELDNAME_GEOPOINT, testTime, connWriteTimeout)
 			}
 			// delay the creation 1ms for each additional client
 			time.Sleep(time.Millisecond * 1)
@@ -197,12 +198,13 @@ func init() {
 	elastic.RegisterElasticRunFlags(pflags)
 }
 
-func queryWorkerGeoShape(uri, password string, queue chan string, complete chan bool, ops *uint64, datapointsChan chan datapoint, totalDatapoints uint64, db string, indexSearchName, fieldName, queryType string, testDuration int, queryTimeoutMillis int64, debugLevel int) {
+func queryWorkerGeoShape(uri, password string, queue chan string, complete chan bool, ops *uint64, datapointsChan chan datapoint, totalDatapoints uint64, db string, indexSearchName, fieldName, queryType string, testDuration int, queryTimeoutMillis int64, debugLevel int, connWriteTimeout time.Duration) {
 	c, err := rueidis.NewClient(rueidis.ClientOption{
-		InitAddress:  []string{uri},
-		DisableCache: true,
-		AlwaysRESP2:  true,
-		Password:     password,
+		InitAddress:      []string{uri},
+		DisableCache:     true,
+		AlwaysRESP2:      true,
+		Password:         password,
+		ConnWriteTimeout: connWriteTimeout,
 	})
 	if err != nil {
 		panic(err)
@@ -291,13 +293,14 @@ func verbosePrintRediSearchReply(querySearch string, polygon string, resultSetSi
 	}
 }
 
-func queryWorkerGeoPoint(uri, password string, queue chan string, complete chan bool, ops *uint64, datapointsChan chan datapoint, totalDatapoints uint64, db string, mu sync.Mutex, r *rand.Rand, redisGeoKeyname string, indexSearchName string, fieldName string, testDuration int) {
+func queryWorkerGeoPoint(uri, password string, queue chan string, complete chan bool, ops *uint64, datapointsChan chan datapoint, totalDatapoints uint64, db string, mu sync.Mutex, r *rand.Rand, redisGeoKeyname string, indexSearchName string, fieldName string, testDuration int, connWriteTimeout time.Duration) {
 
 	c, err := rueidis.NewClient(rueidis.ClientOption{
-		InitAddress:  []string{uri},
-		DisableCache: true,
-		AlwaysRESP2:  true,
-		Password:     password,
+		InitAddress:      []string{uri},
+		DisableCache:     true,
+		AlwaysRESP2:      true,
+		Password:         password,
+		ConnWriteTimeout: connWriteTimeout,
 	})
 	if err != nil {
 		panic(err)

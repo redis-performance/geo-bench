@@ -27,7 +27,7 @@ const QUERY_TYPE_GEODIST_BBOX = "geodist-bbox"
 const QUERY_TYPE_GEOSHAPE_WITHIN = "geoshape-within"
 const QUERY_TYPE_GEOSHAPE_CONTAINS = "geoshape-contains"
 const DEFAULT_QUERY_TYPE = QUERY_TYPE_GEOSHAPE_CONTAINS
-const DEFAULT_QUERY_TIMEOUT = 10000
+const DEFAULT_COMMAND_TIMEOUT = 300000
 const REDIS_IDX_NAME_PROPERTY = "redisearch.index.name"
 const REDIS_URI_PROPERTY = "redis.uri"
 const REDIS_PASSWORD_PROPERTY = "redis.password"
@@ -43,7 +43,7 @@ func RegisterRedisLoadFlags(flags *pflag.FlagSet) {
 	flags.BoolP(REDIS_IDX_PROPERTY, "", true, "Enable redisearch secondary index on HASH and JSON datatypes")
 	flags.StringP(REDIS_IDX_NAME_PROPERTY, "", REDIS_DEFAULT_IDX_NAME, "redisearch secondary index name")
 	flags.StringP(REDIS_GEO_KEYNAME_PROPERTY, "", REDIS_GEO_DEFAULT_KEYNAME, "redis GEO keyname")
-	flags.Int64P(REDIS_COMMAND_TIMEOUT, "", DEFAULT_QUERY_TIMEOUT, "Command timeout in millis.")
+	flags.Int64P(REDIS_COMMAND_TIMEOUT, "", DEFAULT_COMMAND_TIMEOUT, "Command timeout in millis.")
 	flags.IntP("debug", "", 0, "debug level. O no debug.")
 
 }
@@ -52,7 +52,7 @@ func PrepareRedisQueryCommandFlags(pflags *pflag.FlagSet) {
 	pflags.StringP("input", "i", "documents.json", "Input json file")
 	pflags.StringP("input-type", "", DEFAULT_INPUT_TYPE, "Input type. One of 'geopoint' or 'geoshape'")
 	pflags.StringP("query-type", "", DEFAULT_QUERY_TYPE, "Query type. Only used for 'geoshape' inputs. One of 'geoshape-contains' or 'geoshape-within'")
-	pflags.Int64P(REDIS_COMMAND_TIMEOUT, "", DEFAULT_QUERY_TIMEOUT, "Query timeout in millis.")
+	pflags.Int64P(REDIS_COMMAND_TIMEOUT, "", DEFAULT_COMMAND_TIMEOUT, "Command timeout in millis.")
 	pflags.IntP("concurrency", "c", 50, "Concurrency")
 	pflags.IntP("debug", "", 0, "debug level. O no debug.")
 	pflags.IntP("random.seed", "", 12345, "Random seed")
@@ -60,7 +60,7 @@ func PrepareRedisQueryCommandFlags(pflags *pflag.FlagSet) {
 	pflags.IntP("requests", "n", -1, "Requests. If -1 then it will use all input datapoints")
 	pflags.StringP(REDIS_URI_PROPERTY, "u", REDIS_URI_PROPERTY_DEFAULT, "Server URI")
 	pflags.StringP(REDIS_PASSWORD_PROPERTY, "", REDIS_PASSWORD_PROPERTY_DEFAULT, "Server Password")
-	pflags.BoolP("cluster", "", false, "Enable cluster mode")
+	pflags.BoolP(REDIS_CLUSTER_PROPERTY, "", false, "Enable cluster mode")
 	pflags.StringP(REDIS_IDX_NAME_PROPERTY, "", REDIS_DEFAULT_IDX_NAME, "redisearch secondary index name")
 	pflags.StringP(REDIS_GEO_KEYNAME_PROPERTY, "", REDIS_GEO_DEFAULT_KEYNAME, "redis GEO keyname")
 }
