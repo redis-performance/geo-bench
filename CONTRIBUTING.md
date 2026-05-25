@@ -9,7 +9,7 @@ git clone git@github.com:redis-performance/geo-bench.git
 cd geo-bench
 
 # Download module dependencies
-GO111MODELE=on go get -t -v ./...
+GO111MODULE=on go get -t -v ./...
 
 # Build the binary
 make build
