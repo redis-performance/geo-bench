@@ -9,7 +9,7 @@ git clone git@github.com:redis-performance/geo-bench.git
 cd geo-bench
 
 # Download module dependencies
-GO111MODULE=on go get -t -v ./...
+GO111MODELE=on go get -t -v ./...
 
 # Build the binary
 make build
@@ -53,9 +53,7 @@ Run the full test suite (requires a Redis instance on localhost:6379):
 make test
 ```
 
-`make test` runs `gofmt` over all packages and then executes
-`go test -race -covermode=atomic ./...`. CI also exercises `make flowtest`
-against a live Redis service -- see `.github/workflows/test.yml`.
+`make test` runs `gofmt` over all packages and then executes `go test -race -covermode=atomic ./...`. CI also exercises integration tests against a live Redis service.
 
 ## Review process
 
