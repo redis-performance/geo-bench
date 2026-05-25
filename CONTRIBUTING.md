@@ -53,7 +53,7 @@ Run the full test suite (requires a Redis instance on localhost:6379):
 make test
 ```
 
-`make test` runs `gofmt` over all packages and then executes `go test -race -covermode=atomic ./...`. CI also exercises integration tests against a live Redis service.
+`make test` fetches dependencies, runs `gofmt` over all packages, and then executes `go test -race -covermode=atomic ./...`. CI also exercises integration tests against a live Redis service.
 
 ## Review process
 
