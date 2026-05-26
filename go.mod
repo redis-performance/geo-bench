@@ -1,6 +1,6 @@
 module filipecosta90/geo-bench
 
-go 1.19
+go 1.20
 
 require (
 	github.com/HdrHistogram/hdrhistogram-go v1.1.2
